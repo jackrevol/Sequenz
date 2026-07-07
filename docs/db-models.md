@@ -35,7 +35,15 @@
 | `updated_at` | DateTime | 수정 시각 |
 | `is_active` | Boolean | 운영 노출 또는 사용 여부 |
 
-금액 필드는 원화 정수 기준 `PositiveIntegerField`를 사용한다. 비율은 `DecimalField(max_digits=5, decimal_places=2)`를 사용한다.
+금액 필드는 원화 정수 기준 `PositiveBigIntegerField` 또는 `BigIntegerField`를 사용한다. 주문 합계, 누적 구매금액, 적립금 원장은 32비트 정수 범위를 넘을 수 있으므로 `PositiveIntegerField`를 사용하지 않는다. 비율은 `DecimalField(max_digits=5, decimal_places=2)`를 사용한다.
+
+상태값은 Django `TextChoices`로 정의하고 `max_length`, 기본값, DB `CheckConstraint`를 함께 둔다. 결제, 주문, 환불, 클레임, 외부 연동처럼 상태 전이가 중요한 모델은 상태 변경 이력을 별도 history/audit 모델에 남긴다.
+
+조건부 고유성은 애플리케이션 로직에만 맡기지 않는다. 예를 들어 기본 배송지, active cart, 대표 이미지, 기본 배송 정책, 현재 성공 결제는 PostgreSQL partial unique index에 해당하는 Django `UniqueConstraint(condition=...)`로 강제한다.
+
+비즈니스 기록의 FK 삭제 정책은 명시한다. 주문, 결제, 환불, 클레임, 포인트 원장, 리뷰는 원칙적으로 `PROTECT` 또는 `RESTRICT`를 사용한다. 운영자/처리자처럼 계정 삭제 후에도 기록은 남아야 하는 선택 참조는 `SET_NULL`을 사용한다.
+
+`raw_*_summary` JSON 필드는 조회가 잦은 도메인 테이블에 큰 원문을 저장하지 않는다. 도메인 테이블에는 조회에 필요한 추출 필드와 작은 요약만 두고, 큰 요청/응답 본문은 `ExternalApiPayload` 같은 append-only 로그 테이블에 분리 저장한다. 저장 전에는 토큰, 계정, 전화번호, 주소, 결제 상세 등 민감정보를 제거한다.
 
 ## 4. accounts
 
@@ -882,3 +890,464 @@ Django 기본 `AbstractUser` 확장을 전제로 한다.
 | 부분 취소 정책 | 토스 계약/운영 정책 확정 필요 |
 | 비회원 문의 | 허용 여부 미확정 |
 | 회원등급 산정 배치 | 산정 주기와 기준 확정 필요 |
+
+## 16. 서브에이전트 리뷰 반영 보강안
+
+이 섹션은 2026-07-07 다각도 리뷰 결과를 반영한 필수 보강안이다. 이후 Django 모델을 작성할 때는 이 섹션의 구조가 기존 초안보다 우선한다.
+
+### 16.1 상품 옵션은 Variant/SKU 중심으로 변경
+
+기존 `ProductOption(option_name, option_detail_name)`은 색상+사이즈 조합 SKU를 안정적으로 표현하기 어렵다. 장바구니, 주문, 재고, 바코드, 사방넷 옵션 매핑은 `ProductVariant`를 기준으로 한다.
+
+#### ProductOptionGroup
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `product` | FK Product | 상품 |
+| `name` | CharField | 옵션 그룹명. 예: 색상, 사이즈 |
+| `sort_order` | PositiveIntegerField | 정렬 |
+
+#### ProductOptionValue
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `group` | FK ProductOptionGroup | 옵션 그룹 |
+| `value` | CharField | 옵션값. 예: 블랙, M |
+| `display_value` | CharField blank | 표시값 |
+| `color_hex` | CharField blank | 컬러 옵션일 때 스와치 |
+| `sort_order` | PositiveIntegerField | 정렬 |
+
+#### ProductVariant
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `product` | FK Product | 상품 |
+| `variant_code` | CharField unique nullable | 내부 SKU 코드 |
+| `sabangnet_option_id` | CharField blank index | 사방넷 옵션/sku 식별자 후보 |
+| `barcode` | CharField blank index | 바코드 |
+| `option_display_name` | CharField | 예: 블랙 / M |
+| `additional_amount` | BigIntegerField | 옵션 추가금 |
+| `stock_quantity` | IntegerField | 현재 재고 |
+| `safety_stock_quantity` | IntegerField | 안전 재고 |
+| `supply_status` | CharField index | `SALE`, `SOLD_OUT`, `NOT_USE` 등 |
+| `synced_at` | DateTime nullable | 마지막 사방넷 동기화 |
+
+제약:
+
+- `(product, option_display_name)` unique.
+- `barcode`는 빈 문자열과 null을 제외하고 조건부 unique를 검토한다.
+- 장바구니와 주문상품은 `ProductOption`이 아니라 `ProductVariant`를 참조한다.
+
+#### ProductVariantOptionValue
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `variant` | FK ProductVariant | SKU |
+| `option_value` | FK ProductOptionValue | 옵션값 |
+
+제약:
+
+- `(variant, option_value)` unique.
+
+### 16.2 상품정보제공고시 모델 추가
+
+사방넷 `product-info-notice/{noticeType}` 응답은 일반 `ProductAttribute`와 분리한다.
+
+#### ProductInfoNoticeItem
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `notice_type` | CharField index | 예: `WEAR` |
+| `item_code` | CharField | 고시 항목 코드 |
+| `item_name` | CharField | 고시 항목명 |
+| `required_yn` | Boolean | 필수 여부 |
+| `raw_response_summary` | JSONField | 민감정보 제외 응답 요약 |
+
+제약:
+
+- `(notice_type, item_code)` unique.
+
+#### ProductInfoNoticeValue
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `product` | FK Product | 상품 |
+| `item` | FK ProductInfoNoticeItem | 고시 항목 |
+| `value` | TextField | 상품별 고시 값 |
+| `source` | CharField | `sabangnet`, `admin` |
+| `synced_at` | DateTime nullable | 동기화 시각 |
+
+제약:
+
+- `(product, item)` unique.
+
+### 16.3 주문/클레임/환불은 라인 단위로 정산
+
+부분 취소, 부분 반품, 교환, 배송비 재계산, 쿠폰/적립금 회수는 주문 단위 금액만으로 처리할 수 없다.
+
+#### OrderItem 보강
+
+`OrderItem`은 다음 필드를 추가한다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `variant` | FK ProductVariant nullable | 주문 SKU |
+| `brand_name_snapshot` | CharField | 주문 시점 브랜드명 |
+| `category_name_snapshot` | CharField blank | 주문 시점 카테고리명 |
+| `product_image_url_snapshot` | URLField blank | 주문 시점 대표 이미지 |
+| `barcode_snapshot` | CharField blank | 주문 시점 바코드 |
+| `consumer_price_snapshot` | BigIntegerField | 주문 시점 정상가 |
+| `selling_price_snapshot` | BigIntegerField | 주문 시점 판매가 |
+| `tax_code_snapshot` | CharField blank | 주문 시점 과세 코드 |
+| `option_values_snapshot` | JSONField | 색상/사이즈 등 구조화 옵션 |
+| `ordered_quantity` | PositiveIntegerField | 최초 주문 수량 |
+| `cancelled_quantity` | PositiveIntegerField | 취소 수량 |
+| `returned_quantity` | PositiveIntegerField | 반품 수량 |
+| `exchanged_quantity` | PositiveIntegerField | 교환 수량 |
+| `refunded_amount` | BigIntegerField | 이 라인에 배부된 환불액 |
+
+규칙:
+
+- `quantity` 대신 `ordered_quantity`를 기준으로 하고, 기존 `quantity` 필드는 구현 시 제거하거나 alias로만 둔다.
+- `cancelled_quantity + returned_quantity`는 `ordered_quantity`를 넘을 수 없다.
+
+#### ClaimLine
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `claim` | FK Claim | 클레임 |
+| `order_item` | FK OrderItem | 대상 주문상품 |
+| `quantity` | PositiveIntegerField | 클레임 수량 |
+| `status` | CharField index | `requested`, `approved`, `rejected`, `completed`, `failed` |
+| `line_refund_amount` | BigIntegerField | 상품 라인 환불액 |
+| `coupon_discount_reversal` | BigIntegerField | 회수할 쿠폰 할인액 |
+| `point_reversal` | BigIntegerField | 회수할 지급 적립금 |
+| `point_restore_amount` | BigIntegerField | 복원할 사용 적립금 |
+| `shipping_fee_adjustment` | BigIntegerField | 배송비 추가 청구 또는 환불 |
+| `sabangnet_sb_order_no` | CharField blank index | 라인 단위 사방넷 주문번호 |
+| `sabangnet_claim_status` | CharField blank | 사방넷 클레임 상태 |
+
+제약:
+
+- `(claim, order_item)` unique.
+
+#### RefundAllocation
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `refund` | FK Refund | 환불 |
+| `claim_line` | FK ClaimLine nullable | 클레임 라인 |
+| `order_item` | FK OrderItem nullable | 주문상품 |
+| `allocation_type` | CharField | `item`, `shipping`, `coupon`, `point`, `manual_adjustment` |
+| `amount` | BigIntegerField | 배부 금액 |
+| `memo` | CharField blank | 메모 |
+
+### 16.4 주문 배송비와 쿠폰 적용은 스냅샷/배부 테이블로 관리
+
+#### OrderShippingCharge
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `order` | OneToOne Order | 주문 |
+| `shipping_policy` | FK ShippingPolicy nullable | 적용 정책 |
+| `policy_snapshot` | JSONField | 정책 스냅샷 |
+| `base_fee` | BigIntegerField | 기본 배송비 |
+| `remote_area_fee` | BigIntegerField | 도서산간 추가비 |
+| `free_shipping_discount` | BigIntegerField | 무료배송 할인 |
+| `shipping_coupon_discount` | BigIntegerField | 배송 쿠폰 할인 |
+| `final_shipping_fee` | BigIntegerField | 최종 배송비 |
+| `refunded_shipping_fee` | BigIntegerField | 환불된 배송비 |
+| `additional_shipping_fee` | BigIntegerField | 반품 등으로 추가 청구할 배송비 |
+
+#### OrderCoupon
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `order` | FK Order | 주문 |
+| `user_coupon` | FK UserCoupon | 사용 쿠폰 |
+| `coupon_code_snapshot` | CharField | 쿠폰 코드 |
+| `coupon_name_snapshot` | CharField | 쿠폰명 |
+| `discount_type_snapshot` | CharField | 정액/정률/무료배송 |
+| `discount_value_snapshot` | BigIntegerField | 할인 값 |
+| `discount_target` | CharField | `items`, `shipping` |
+| `discount_amount` | BigIntegerField | 실제 할인액 |
+| `restored_at` | DateTime nullable | 취소/반품 후 복구 시각 |
+
+제약:
+
+- `(order, user_coupon)` unique.
+
+#### OrderCouponAllocation
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `order_coupon` | FK OrderCoupon | 주문 쿠폰 |
+| `order_item` | FK OrderItem nullable | 상품 할인 배부 |
+| `amount` | BigIntegerField | 배부 할인액 |
+
+### 16.5 토스 결제는 PaymentAttempt를 둔다
+
+`Payment`를 주문과 1:1로 두면 실패/재시도/성공 리다이렉트 유실/중복 웹훅을 표현하기 어렵다. 주문은 여러 결제 시도를 가질 수 있고, 성공 결제만 현재 결제로 간주한다.
+
+#### PaymentAttempt
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `order` | FK Order | 주문 |
+| `provider` | CharField | `toss_payments` |
+| `customer_key_hash` | CharField index | 결제위젯 customerKey 해시 |
+| `order_id` | CharField index | 토스 `orderId` |
+| `order_name` | CharField | 결제 요청 상품명 |
+| `expected_amount` | BigIntegerField | 서버 계산 결제 예정 금액 |
+| `redirect_payment_key` | CharField blank index | 성공 URL paymentKey |
+| `redirect_amount` | BigIntegerField nullable | 성공 URL amount |
+| `fail_code` | CharField blank | 실패 코드 |
+| `safe_fail_message` | CharField blank | 정제된 실패 메시지 |
+| `confirm_idempotency_key` | CharField blank index | 승인 멱등키 |
+| `status` | CharField index | `created`, `redirected`, `confirming`, `confirmed`, `failed`, `expired`, `unknown` |
+| `expires_at` | DateTime nullable | 결제 시도 만료 |
+| `confirmed_payment` | FK Payment nullable | 성공 결제 |
+| `payload_summary` | JSONField | 민감정보 제외 요약 |
+
+제약:
+
+- `(provider, confirm_idempotency_key)` unique where key is not null and not empty.
+- 주문당 성공 결제는 1개만 허용하는 조건부 unique를 둔다.
+
+#### Payment 보강
+
+- `order`는 OneToOne이 아니라 FK로 둔다.
+- `payment_key`는 값이 있으면 unique.
+- `Payment`는 승인된 결제 객체 중심으로 저장한다.
+- 주문의 현재 성공 결제는 조건부 unique 또는 `Order.current_payment`로 관리한다.
+
+### 16.6 사방넷 주문은 라인 단위 매핑을 둔다
+
+사방넷 주문, 송장, 클레임은 `sbOrderNo`와 상품/sku 행 단위로 응답될 수 있으므로 주문 단위 `sabangnet_order_no`만으로 부족하다.
+
+#### SabangnetOrderLine
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `order` | FK Order | 내부 주문 |
+| `order_item` | FK OrderItem | 내부 주문상품 |
+| `submission` | FK SabangnetOrderSubmission nullable | 전송 작업 |
+| `shop_order_no` | CharField index | 쇼핑몰 주문번호 |
+| `shop_order_line_no` | CharField blank index | 쇼핑몰 주문 라인번호 |
+| `sb_order_no` | CharField index | 사방넷 주문번호 |
+| `sb_order_seq` | CharField blank | 사방넷 주문 행/순번 |
+| `order_status` | CharField blank | 사방넷 주문 상태 |
+| `claim_status` | CharField blank | 사방넷 클레임 상태 |
+| `waybill_no` | CharField blank index | 라인 기준 송장번호 |
+| `raw_response_summary` | JSONField | 민감정보 제외 응답 요약 |
+
+제약:
+
+- `(sb_order_no, sb_order_seq)` unique where both are present.
+- `Shipment`과 `ClaimLine`은 필요 시 `SabangnetOrderLine`을 참조한다.
+
+#### SabangnetOrderSubmission 보강
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `operation_idempotency_key` | CharField index | 주문 전송 멱등키 |
+| `external_request_id` | CharField blank index | 사방넷 또는 내부 요청 ID |
+| `attempt_count` | PositiveIntegerField | 총 시도 횟수 |
+| `terminal_failure_at` | DateTime nullable | 더 이상 재시도하지 않는 실패 시각 |
+
+제약:
+
+- `(order, operation_idempotency_key)` unique.
+
+### 16.7 외부 API 재시도는 시도 단위로 기록
+
+#### ExternalOperationAttempt
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `job` | FK IntegrationJob nullable | 연동 작업 |
+| `api_log` | FK ExternalApiLog nullable | 요청/응답 로그 |
+| `provider` | CharField | 외부 서비스 |
+| `operation` | CharField | `payment_confirm`, `payment_cancel`, `sabangnet_order_submit`, `waybill_sync` 등 |
+| `operation_key` | CharField index | 내부 작업 키 |
+| `idempotency_key` | CharField blank index | 멱등키 |
+| `attempt_number` | PositiveIntegerField | 시도 번호 |
+| `retryable` | Boolean | 재시도 가능 여부 |
+| `retry_policy` | CharField blank | backoff 정책 |
+| `provider_request_id` | CharField blank index | 외부 correlation/request id |
+| `status` | CharField index | `started`, `succeeded`, `failed`, `timeout`, `unknown` |
+| `safe_error_message` | CharField blank | 정제된 오류 메시지 |
+| `started_at` | DateTime | 시작 |
+| `finished_at` | DateTime nullable | 종료 |
+
+제약:
+
+- `(provider, operation, idempotency_key)` unique where idempotency_key is present.
+- `(provider, operation, operation_key, attempt_number)` unique.
+
+### 16.8 웹훅은 payload hash와 서명 검증을 저장
+
+`WebhookEvent`에 다음 필드를 추가한다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `payload_hash` | CharField index | 정규화 payload hash |
+| `signature_verified` | Boolean nullable | 서명 검증 결과 |
+| `signature_checked_at` | DateTime nullable | 검증 시각 |
+| `first_seen_at` | DateTime | 최초 수신 |
+| `last_seen_at` | DateTime | 마지막 수신 |
+| `replay_count` | PositiveIntegerField | 중복 수신 횟수 |
+
+제약:
+
+- `(provider, event_id)` unique where event_id is not null and not empty.
+- `(provider, payload_hash)` unique where event_id is absent.
+- 상태 변경 처리는 트랜잭션과 row lock으로 멱등 처리한다.
+
+### 16.9 개인정보/동의/삭제 감사 모델 추가
+
+#### ConsentRecord
+
+현재 동의 여부는 `User`의 캐시 필드로 둘 수 있지만, 법적 증적은 immutable record로 남긴다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `user` | FK User nullable | 회원 |
+| `guest_key_hash` | CharField blank index | 비회원 동의가 필요할 때 |
+| `consent_type` | CharField | `terms`, `privacy`, `marketing_email`, `marketing_sms` 등 |
+| `policy_version` | CharField | 약관/정책 버전 |
+| `granted` | Boolean | 동의 여부 |
+| `granted_at` | DateTime nullable | 동의 시각 |
+| `revoked_at` | DateTime nullable | 철회 시각 |
+| `source` | CharField | 가입, 주문서, 마이페이지 등 |
+| `ip_hash` | CharField blank | IP 해시 |
+| `user_agent_summary` | CharField blank | UA 요약 |
+
+#### DataDeletionAudit
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `user` | FK User nullable | 회원 |
+| `request_type` | CharField | `withdrawal`, `pii_erasure`, `retention_expiry` |
+| `requested_at` | DateTime | 요청 시각 |
+| `processed_at` | DateTime nullable | 처리 시각 |
+| `pii_erased_at` | DateTime nullable | PII 삭제/익명화 시각 |
+| `retention_expires_at` | DateTime nullable | 보존 만료 |
+| `legal_hold_until` | DateTime nullable | 법적 보존 기한 |
+| `fields_erased` | JSONField | 삭제/익명화 필드 목록 |
+| `actor` | FK User nullable | 처리자 |
+
+PII 보강 규칙:
+
+- `guest_key`, `guest_order_key`는 원문 저장하지 않고 keyed hash만 저장한다.
+- 비회원 주문조회 토큰은 고엔트로피 랜덤값으로 생성하고 만료일을 둔다.
+- 주문/결제/세무 보존 대상 데이터와 삭제 가능한 PII를 분리한다.
+
+### 16.10 상태 변경/운영 감사 모델 추가
+
+#### AdminAuditLog
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `actor` | FK User nullable | 작업자 |
+| `target_type` | CharField | 대상 모델명 |
+| `target_id` | CharField | 대상 ID |
+| `action` | CharField | 작업 종류 |
+| `before_state` | JSONField | 변경 전 요약 |
+| `after_state` | JSONField | 변경 후 요약 |
+| `reason` | TextField blank | 작업 사유 |
+| `correlation_id` | CharField index | 관련 요청/작업 ID |
+| `created_at` | DateTime | 생성 시각 |
+
+#### StatusHistory
+
+주문, 결제, 환불, 클레임, 연동 작업별로 개별 모델을 만들거나 공통 history 모델을 둔다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `domain` | CharField | `order`, `payment`, `refund`, `claim`, `integration` |
+| `target_id` | CharField index | 대상 ID |
+| `before_status` | CharField blank | 이전 상태 |
+| `after_status` | CharField | 변경 상태 |
+| `source` | CharField | `system`, `admin`, `webhook`, `batch`, `api_callback` |
+| `actor` | FK User nullable | 운영자 |
+| `reason` | TextField blank | 사유 |
+| `correlation_id` | CharField index | 요청/작업 연결 |
+| `created_at` | DateTime | 변경 시각 |
+
+### 16.11 정산/대사 모델 추가
+
+토스 결제 상태, 내부 주문, 환불, 사방넷 전송 상태를 주기적으로 비교한다.
+
+#### ReconciliationRun
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `provider` | CharField | `toss_payments`, `sabangnet`, `internal` |
+| `period_start` | DateTime | 대사 시작 |
+| `period_end` | DateTime | 대사 종료 |
+| `status` | CharField | `running`, `succeeded`, `failed`, `partial` |
+| `compared_count` | PositiveIntegerField | 비교 건수 |
+| `matched_count` | PositiveIntegerField | 일치 건수 |
+| `issue_count` | PositiveIntegerField | 불일치 건수 |
+| `started_at` | DateTime | 시작 |
+| `finished_at` | DateTime nullable | 종료 |
+
+#### ReconciliationIssue
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `run` | FK ReconciliationRun | 대사 작업 |
+| `order` | FK Order nullable | 관련 주문 |
+| `payment` | FK Payment nullable | 관련 결제 |
+| `issue_type` | CharField | `amount_mismatch`, `status_mismatch`, `missing_external`, `duplicate_external` 등 |
+| `severity` | CharField | `critical`, `important`, `minor` |
+| `internal_snapshot` | JSONField | 내부 상태 요약 |
+| `external_snapshot` | JSONField | 외부 상태 요약 |
+| `status` | CharField | `open`, `resolved`, `ignored` |
+| `resolved_by` | FK User nullable | 처리자 |
+| `resolved_at` | DateTime nullable | 처리 시각 |
+| `resolution_note` | TextField blank | 처리 메모 |
+
+### 16.12 운영 알림/장애 모델 추가
+
+#### OpsAlert
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `severity` | CharField | `critical`, `important`, `minor` |
+| `status` | CharField | `open`, `acknowledged`, `resolved`, `ignored` |
+| `source` | CharField | `integration_job`, `api_log`, `reconciliation`, `payment` |
+| `integration_job` | FK IntegrationJob nullable | 관련 작업 |
+| `api_log` | FK ExternalApiLog nullable | 관련 로그 |
+| `order` | FK Order nullable | 관련 주문 |
+| `payment` | FK Payment nullable | 관련 결제 |
+| `title` | CharField | 알림 제목 |
+| `safe_message` | TextField | 정제된 메시지 |
+| `customer_impact` | TextField blank | 고객 영향 |
+| `runbook_url` | URLField blank | 대응 문서 |
+| `acknowledged_by` | FK User nullable | 확인자 |
+| `acknowledged_at` | DateTime nullable | 확인 시각 |
+| `resolved_by` | FK User nullable | 해결자 |
+| `resolved_at` | DateTime nullable | 해결 시각 |
+
+### 16.13 raw polymorphic reference 제거
+
+`HomeBanner.link_type + link_object_id`와 `ContentProduct.content_type + object_id`는 DB FK 무결성을 보장하지 못한다.
+
+수정 원칙:
+
+- `HomeBanner`는 `product`, `promotion`, `collection`, `lookbook` nullable FK를 각각 두고, `external_url`과 함께 정확히 하나만 설정되도록 CheckConstraint를 둔다.
+- `ContentProduct`는 제거하고 `PromotionProduct`, `CollectionProduct`, `LookbookProduct`를 별도 through 모델로 둔다.
+- 각 through 모델은 `(content, product)` unique와 `sort_order`를 가진다.
+
+### 16.14 구현 시 필수 DB 제약 요약
+
+- 기본 배송지: `UniqueConstraint(user, condition=is_default=True)`.
+- active cart: 회원은 `(user)` where `status='active'`, 비회원은 `(guest_key_hash)` where `status='active'`.
+- 대표 이미지: `(product)` where `is_primary=True`.
+- 기본 배송 정책: one row where `is_default=True`.
+- root category slug: `slug` unique where `parent IS NULL`, `(parent, slug)` unique where `parent IS NOT NULL`.
+- webhook event: `(provider, event_id)` unique when event_id present, `(provider, payload_hash)` unique when event_id absent.
+- refund transaction: `transaction_key` unique when not null and not empty.
+- point ledger idempotency: `(user, source_type, source_id, change_type)` unique.
