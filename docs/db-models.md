@@ -1351,3 +1351,161 @@ PII 보강 규칙:
 - webhook event: `(provider, event_id)` unique when event_id present, `(provider, payload_hash)` unique when event_id absent.
 - refund transaction: `transaction_key` unique when not null and not empty.
 - point ledger idempotency: `(user, source_type, source_id, change_type)` unique.
+
+### 16.15 상품 마스터와 판매 공고 분리
+
+현재 초안의 `Product`는 사방넷 원천 상품, 쇼핑몰 노출, 판매 상태, 진열 라벨, 상세 보강까지 함께 가진다. 이 구조는 사실상 `상품 = 판매 공고`가 되어 다음 문제가 생긴다.
+
+- 같은 상품을 기간별/채널별/기획전별로 다른 판매 조건으로 노출하기 어렵다.
+- 사방넷 원천 상품 동기화와 쇼핑몰 판매 화면 운영이 충돌한다.
+- 판매 중지, 예약 판매, 시즌 재오픈, 비공개 상품 보관 같은 상태를 상품 자체 상태와 구분하기 어렵다.
+- 주문 이력은 판매 당시 공고 조건을 참조해야 하는데, 상품 마스터가 갱신되면 의미가 흐려진다.
+
+따라서 구현 시 `Product`는 상품 마스터, `ProductListing`은 쇼핑몰 판매 공고로 분리한다.
+
+#### Product 책임 재정의
+
+`Product`는 사방넷에서 동기화되는 상품 원장이다.
+
+유지할 책임:
+
+- 사방넷 상품코드와 자체상품코드
+- 브랜드/카테고리 기본 매핑
+- 상품명, 제조사, 원산지, 모델명
+- 원천 가격 필드
+- 원천 공급 상태
+- 원천 상세 설명과 이미지
+- 원천 상품정보제공고시
+- 마지막 동기화 시각과 원천 payload 요약
+
+제거하거나 `ProductListing`으로 이동할 책임:
+
+- `is_visible`
+- `is_featured`
+- `is_new_label`
+- 쇼핑몰 전용 상세 설명
+- 쇼핑몰 노출명
+- 검색/SEO 문구
+- 판매 시작/종료일
+- 판매 상태
+- 진열 순서
+- 고객 화면 판매가/할인 라벨
+
+#### ProductListing
+
+쇼핑몰에서 고객에게 보이는 판매 공고다. 1차 오픈에서는 상품당 active listing 1개를 기본으로 두되, 구조는 다중 listing을 허용한다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `product` | FK Product | 원천 상품 |
+| `listing_code` | CharField unique | 내부 판매공고 코드 |
+| `sales_channel` | CharField | `main_mall`, `event`, `private`, `preview` 등 |
+| `status` | CharField index | `draft`, `scheduled`, `active`, `paused`, `ended`, `archived` |
+| `display_name` | CharField | 고객 화면 상품명 |
+| `slug` | SlugField | 고객 URL |
+| `listing_summary` | TextField blank | 목록/검색 요약 |
+| `listing_detail_html` | TextField blank | 쇼핑몰 전용 상세 보강 |
+| `seo_title` | CharField blank | SEO 제목 |
+| `seo_description` | CharField blank | SEO 설명 |
+| `starts_at` | DateTime nullable | 판매 시작 |
+| `ends_at` | DateTime nullable | 판매 종료 |
+| `sort_order` | PositiveIntegerField | 기본 진열 순서 |
+| `is_featured` | Boolean | 추천 노출 |
+| `is_new_label` | Boolean | 신상품 라벨 |
+| `is_sale_label` | Boolean | 세일 라벨 |
+| `consumer_price_snapshot` | BigIntegerField | 고객 표시 정상가 |
+| `selling_price_snapshot` | BigIntegerField | 고객 표시 판매가 |
+| `discount_rate_snapshot` | DecimalField nullable | 고객 표시 할인율 |
+| `price_source` | CharField | `sabangnet`, `manual_snapshot`, `campaign` |
+| `search_keywords` | CharField blank | 쇼핑몰 검색 키워드 |
+| `created_by` | FK User nullable | 생성 운영자 |
+| `updated_by` | FK User nullable | 수정 운영자 |
+
+인덱스/제약:
+
+- `(product, status)` index.
+- `(sales_channel, status, starts_at, ends_at)` index.
+- `slug`는 active/scheduled listing 기준 unique 정책을 둔다.
+- 상품당 1개의 기본 active listing만 허용하려면 `(product, sales_channel)` where `status='active'` 조건부 unique를 둔다.
+
+운영 원칙:
+
+- 사방넷 가격/공급 상태가 바뀌면 active listing의 가격 snapshot 갱신 여부를 정책으로 결정한다.
+- `price_source=sabangnet`이면 동기화로 가격을 갱신한다.
+- `price_source=manual_snapshot` 또는 `campaign`이면 운영자가 지정한 기간과 금액을 우선한다.
+- listing이 종료되어도 주문 이력은 해당 listing snapshot을 유지한다.
+
+#### ProductListingVariant
+
+판매 공고별 SKU 노출과 판매 가능 상태를 관리한다. 같은 상품 variant라도 특정 listing에서만 숨기거나 품절 처리할 수 있다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `listing` | FK ProductListing | 판매 공고 |
+| `variant` | FK ProductVariant | SKU |
+| `status` | CharField index | `active`, `hidden`, `sold_out`, `paused` |
+| `additional_amount_snapshot` | BigIntegerField | 판매 공고 기준 옵션 추가금 |
+| `stock_display_policy` | CharField | `show`, `hide`, `low_stock_only` |
+| `sort_order` | PositiveIntegerField | 옵션 노출 순서 |
+
+제약:
+
+- `(listing, variant)` unique.
+
+#### ProductListingImage
+
+판매 공고별 이미지 순서와 대표 이미지를 관리한다. 원천 상품 이미지를 재사용하거나 관리자 이미지를 추가할 수 있다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `listing` | FK ProductListing | 판매 공고 |
+| `product_image` | FK ProductImage nullable | 원천/관리자 상품 이미지 |
+| `image_url` | URLField blank | listing 전용 이미지 |
+| `alt_text` | CharField blank | 대체 텍스트 |
+| `sort_order` | PositiveIntegerField | 정렬 |
+| `is_primary` | Boolean | 대표 이미지 |
+
+제약:
+
+- `(listing)` where `is_primary=True` 조건부 unique.
+
+#### OrderItem 보강
+
+주문상품은 상품 마스터만이 아니라 판매 공고도 스냅샷으로 남긴다.
+
+추가 필드:
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `listing` | FK ProductListing nullable | 주문 당시 판매 공고 |
+| `listing_code_snapshot` | CharField | 주문 당시 판매공고 코드 |
+| `listing_name_snapshot` | CharField | 주문 당시 고객 표시 상품명 |
+| `listing_price_source_snapshot` | CharField | 주문 당시 가격 출처 |
+
+#### 콘텐츠 연결 변경
+
+기획전, 컬렉션, 룩북은 `Product`가 아니라 `ProductListing`을 연결한다. 고객이 클릭하는 대상은 원천 상품이 아니라 판매 가능한 공고이기 때문이다.
+
+- `PromotionProduct` -> `PromotionListing`
+- `CollectionProduct` -> `CollectionListing`
+- `LookbookProduct` -> `LookbookListing`
+
+각 through 모델은 `listing`, `sort_order`, `display_label`을 가진다.
+
+#### 장바구니 변경
+
+`CartItem`은 `product + variant` 대신 `listing + listing_variant`를 참조한다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `listing` | FK ProductListing | 판매 공고 |
+| `listing_variant` | FK ProductListingVariant | 판매 공고 SKU |
+| `unit_price_snapshot` | BigIntegerField | 담은 시점 판매가 |
+
+장바구니 검증은 다음 순서로 한다.
+
+1. listing 상태가 active인지 확인.
+2. 현재 시간이 `starts_at`/`ends_at` 범위인지 확인.
+3. listing variant가 active인지 확인.
+4. 원천 `ProductVariant` 재고와 공급 상태를 확인.
+5. 가격이 변경됐으면 주문서 진입 시 최신 가격으로 재계산하고 사용자에게 알린다.

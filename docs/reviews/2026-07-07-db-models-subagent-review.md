@@ -146,6 +146,19 @@ event id가 없거나 중복 전송될 때 payload hash, signature verification,
 - `on_delete` 정책 명시 원칙 추가.
 - 운영 알림/장애 lifecycle을 `OpsAlert`로 보강.
 
+## 추가 사용자 리뷰 반영
+
+### 상품과 판매 공고 책임 혼합
+
+기존 `Product`가 사방넷 원천 상품과 쇼핑몰 판매 공고의 역할을 함께 갖고 있었다. 이 경우 상품 동기화, 진열, 판매 기간, 고객 표시 가격, 기획전 연결, 장바구니 검증이 모두 상품 마스터에 묶인다.
+
+반영:
+
+- `Product`는 사방넷 원천 상품 마스터로 재정의.
+- `ProductListing`을 판매 공고로 추가.
+- `ProductListingVariant`, `ProductListingImage` 추가.
+- 주문상품, 콘텐츠 연결, 장바구니가 `Product` 대신 `ProductListing` 기준으로 동작하도록 원칙 보강.
+
 ## 반영 위치
 
 대부분의 보강은 `docs/db-models.md`의 `16. 서브에이전트 리뷰 반영 보강안`에 반영했다. 구현 시 이 섹션은 기존 초안보다 우선한다.
