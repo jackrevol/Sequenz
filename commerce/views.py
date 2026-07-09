@@ -3,8 +3,16 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Cart, CartItem, Order, OrderItem, PaymentAttempt, hash_guest_key
-from .serializers import CartItemCreateSerializer, CartItemSerializer, OrderCreateSerializer, OrderSerializer
+from integrations.models import SabangnetOrderSubmission
+
+from .models import Cart, CartItem, Order, OrderItem, Payment, PaymentAttempt, hash_guest_key
+from .serializers import (
+    CartItemCreateSerializer,
+    CartItemSerializer,
+    OrderCreateSerializer,
+    OrderSerializer,
+    TossPaymentConfirmSerializer,
+)
 
 
 def get_guest_hash(request):
@@ -119,3 +127,86 @@ def _order_name(cart_items):
     if extra_count <= 0:
         return first
     return f"{first} 외 {extra_count}건"
+
+
+class TossPaymentConfirmView(APIView):
+    @transaction.atomic
+    def post(self, request):
+        serializer = TossPaymentConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            order = Order.objects.select_for_update().get(order_number=data["order_number"])
+        except Order.DoesNotExist:
+            return Response({"detail": "Unknown order."}, status=status.HTTP_404_NOT_FOUND)
+
+        existing_payment = Payment.objects.filter(payment_key=data["payment_key"]).first()
+        if existing_payment:
+            if existing_payment.order_id != order.id:
+                return Response({"detail": "Payment key belongs to another order."}, status=status.HTTP_409_CONFLICT)
+            self._ensure_sabangnet_submission(order)
+            return Response(self._payment_response(existing_payment), status=status.HTTP_200_OK)
+
+        if data["amount"] != order.payment_amount:
+            return Response({"detail": "Payment amount does not match order amount."}, status=status.HTTP_400_BAD_REQUEST)
+
+        attempt = order.payment_attempts.order_by("-created_at").first()
+        if attempt is None:
+            attempt = PaymentAttempt.objects.create(
+                order=order,
+                customer_key_hash=order.guest_order_key_hash or "",
+                toss_order_id=order.order_number,
+                order_name=order.items.first().listing_name_snapshot if order.items.exists() else order.order_number,
+                expected_amount=order.payment_amount,
+            )
+        attempt.redirect_payment_key = data["payment_key"]
+        attempt.redirect_amount = data["amount"]
+        attempt.status = PaymentAttempt.Status.CONFIRMED
+        attempt.save(update_fields=["redirect_payment_key", "redirect_amount", "status", "updated_at"])
+
+        payment = Payment.objects.create(
+            order=order,
+            attempt=attempt,
+            payment_key=data["payment_key"],
+            toss_order_id=order.order_number,
+            status="DONE",
+            method=data.get("method", ""),
+            total_amount=order.payment_amount,
+            balance_amount=order.payment_amount,
+            raw_response_summary={
+                "paymentKey": data["payment_key"],
+                "orderId": order.order_number,
+                "amount": data["amount"],
+                "method": data.get("method", ""),
+                "status": "DONE",
+            },
+        )
+        order.status = Order.Status.PAID
+        order.sabangnet_status = "pending"
+        order.save(update_fields=["status", "sabangnet_status", "updated_at"])
+        self._ensure_sabangnet_submission(order)
+        return Response(self._payment_response(payment), status=status.HTTP_201_CREATED)
+
+    def _ensure_sabangnet_submission(self, order):
+        return SabangnetOrderSubmission.objects.get_or_create(
+            order=order,
+            defaults={
+                "status": SabangnetOrderSubmission.Status.PENDING,
+                "operation_idempotency_key": f"sabangnet-order:{order.order_number}",
+                "payload_summary": {
+                    "order_number": order.order_number,
+                    "payment_amount": order.payment_amount,
+                    "item_count": order.items.count(),
+                },
+            },
+        )
+
+    def _payment_response(self, payment):
+        return {
+            "id": payment.id,
+            "order_number": payment.order.order_number,
+            "payment_key": payment.payment_key,
+            "status": payment.status,
+            "total_amount": payment.total_amount,
+            "balance_amount": payment.balance_amount,
+        }

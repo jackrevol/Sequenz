@@ -16,6 +16,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "catalog",
     "commerce",
+    "integrations",
 ]
 
 MIDDLEWARE = [

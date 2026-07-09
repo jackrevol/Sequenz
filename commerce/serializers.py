@@ -71,3 +71,10 @@ class OrderSerializer(serializers.ModelSerializer):
             "shipping_fee",
             "payment_amount",
         ]
+
+
+class TossPaymentConfirmSerializer(serializers.Serializer):
+    order_number = serializers.CharField(max_length=40)
+    payment_key = serializers.CharField(max_length=200)
+    amount = serializers.IntegerField(min_value=0)
+    method = serializers.CharField(max_length=40, required=False, allow_blank=True)
