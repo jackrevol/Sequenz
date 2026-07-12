@@ -162,6 +162,42 @@ class ProductImage(models.Model):
         ]
 
 
+class ProductInformationNotice(models.Model):
+    product = models.OneToOneField(Product, on_delete=models.CASCADE, related_name="information_notice")
+    notice_type = models.CharField(max_length=120, blank=True)
+    fields = models.JSONField(default=dict, blank=True)
+    source = models.CharField(max_length=20, default="sabangnet")
+    synced_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class ProductAttribute(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="attributes")
+    name = models.CharField(max_length=80, db_index=True)
+    value = models.CharField(max_length=160, db_index=True)
+    is_filterable = models.BooleanField(default=True, db_index=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    source = models.CharField(max_length=20, default="sabangnet")
+
+    class Meta:
+        ordering = ["sort_order", "name", "value"]
+        constraints = [
+            models.UniqueConstraint(fields=["product", "name", "value"], name="unique_product_attribute_value")
+        ]
+
+
+class SearchKeyword(models.Model):
+    keyword = models.CharField(max_length=120, unique=True)
+    search_count = models.PositiveBigIntegerField(default=0)
+    is_recommended = models.BooleanField(default=False, db_index=True)
+    is_visible = models.BooleanField(default=True, db_index=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    last_searched_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["sort_order", "-search_count", "keyword"]
+
+
 class ProductSyncSnapshot(models.Model):
     class Status(models.TextChoices):
         CREATED = "created", "Created"

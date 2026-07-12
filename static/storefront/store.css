@@ -22,6 +22,10 @@ button,input,select { font:inherit; }
 .chip.active { color:#fff; background:var(--ink); border-color:var(--ink); }
 .search-row { display:grid; grid-template-columns:1fr 116px; gap:8px; }
 .search-row input,.search-row select { width:100%; border:1px solid var(--line); background:#fff; padding:12px; }
+.attribute-filters { display:flex; gap:8px; overflow:auto; margin-bottom:10px; }
+.attribute-filters label { display:flex; align-items:center; gap:6px; white-space:nowrap; font-size:12px; }
+.attribute-filters select { border:1px solid var(--line); background:#fff; padding:8px; }
+.search-keywords { margin-top:10px; padding-bottom:0; }
 .product-section { padding:8px 18px 40px; }
 .section-title { display:flex; justify-content:space-between; align-items:baseline; }
 .section-title h2 { font-size:18px; letter-spacing:.08em; }
@@ -39,6 +43,7 @@ button,input,select { font:inherit; }
 .collection-sections { padding:0 18px 50px; }
 .collection-block { margin-top:42px; }
 .collection-head { min-height:210px; padding:24px; display:flex; flex-direction:column; justify-content:flex-end; background:var(--paper) center/cover; }
+.collection-head[data-curated-type] { cursor:pointer; }
 .collection-head h2 { margin:5px 0; font-size:28px; }
 .collection-products { display:grid; grid-auto-flow:column; grid-auto-columns:44%; gap:10px; overflow:auto; padding-top:14px; }
 .sheet { width:min(100%,560px); height:90vh; margin:auto 0 0 auto; border:0; padding:26px 20px; }
@@ -46,6 +51,17 @@ button,input,select { font:inherit; }
 .sheet-close { position:absolute; right:16px; top:12px; border:0; background:none; font-size:30px; }
 .detail-visual { aspect-ratio:4/3; background:var(--paper); display:grid; place-items:center; margin:28px 0 22px; }
 .detail-visual img { width:100%; height:100%; object-fit:contain; }
+.detail-image-button { width:100%; height:100%; border:0; padding:0; background:transparent; overflow:auto; cursor:zoom-in; }
+.detail-image-button.zoomed img { width:180%; max-width:none; height:auto; cursor:zoom-out; }
+.image-thumbnails { display:flex; gap:7px; overflow:auto; margin-top:8px; }
+.image-thumbnails button { flex:0 0 64px; height:74px; padding:0; border:1px solid var(--line); background:#fff; }
+.product-attributes div { display:flex; gap:12px; font-size:13px; }
+.product-attributes dt { min-width:70px; color:var(--muted); }
+.product-attributes dd { margin:0; }
+.product-notice { margin-top:24px; padding:14px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); font-size:13px; }
+.curated-gallery { display:grid; gap:12px; }
+.curated-gallery figure { margin:0; }
+.curated-gallery img { width:100%; display:block; }
 .detail-price { font-size:18px; font-weight:700; }
 .product-description { margin:20px 0; color:#444; line-height:1.7; white-space:pre-line; }
 .variant-select,.primary-button { width:100%; padding:15px; margin-top:14px; }
@@ -72,6 +88,9 @@ button,input,select { font:inherit; }
 .payment-option input { position:absolute; opacity:0; }
 .payment-option span { display:block; border:1px solid var(--line); padding:14px 10px; text-align:center; }
 .payment-option input:checked + span { border:2px solid var(--ink); background:var(--paper); font-weight:700; }
+.benefit-fields { display:grid; gap:10px; padding:16px; background:var(--paper); }
+.benefit-fields label { display:grid; gap:6px; }
+.benefit-fields select,.benefit-fields input { width:100%; padding:12px; border:1px solid var(--line); background:#fff; }
 .order-complete { margin-top:40px; padding:28px 20px; background:var(--paper); }
 .checkbox-row { display:flex; align-items:center; gap:8px; font-size:13px; }
 .checkbox-row input { width:auto; }
@@ -89,6 +108,8 @@ button,input,select { font:inherit; }
 .shipment-box { margin:18px 0; padding:14px; background:var(--paper); font-size:13px; }
 .order-item { padding:14px 0; border-bottom:1px solid var(--line); }
 .review-form,.inquiry-form { display:grid; gap:9px; margin-top:14px; }
+.address-editor { display:grid; grid-template-columns:repeat(2,1fr); gap:7px; padding:12px 0; border-bottom:1px solid var(--line); }
+.address-editor input { min-width:0; padding:9px; border:1px solid var(--line); }
 .review-form input,.review-form textarea,.review-form select,.inquiry-form input,.inquiry-form textarea,.inquiry-form select { width:100%; padding:12px; border:1px solid var(--line); }
 .review-summary { margin:24px 0 10px; font-weight:700; }
 .review-card { padding:13px 0; border-top:1px solid var(--line); }

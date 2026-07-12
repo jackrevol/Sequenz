@@ -854,11 +854,11 @@ Django 기본 `AbstractUser` 확장을 전제로 한다.
 6. 필터 속성은 `ProductAttribute` upsert.
 7. 변경 요약은 `ProductSyncSnapshot`에 저장.
 
-### 사방넷 주문 전송
+### 사방넷 주문등록 엑셀 생성
 
 1. 토스 결제 승인 후 `Order.status=paid`.
 2. `SabangnetOrderSubmission(status=pending)` 생성.
-3. 사방넷 주문 전송 API 확인 후 payload 생성.
+3. 사방넷 시퀸즈 `[20316]` 전용 주문등록 엑셀 생성.
 4. 성공 시 `Order.sabangnet_status=sent`, `sabangnet_order_no` 저장.
 5. 실패 시 `Order.sabangnet_status=failed`, `next_retry_at` 설정.
 
@@ -883,7 +883,7 @@ Django 기본 `AbstractUser` 확장을 전제로 한다.
 
 | 항목 | 이유 |
 | --- | --- |
-| 사방넷 주문 신규 등록 모델 | 공개 샘플에서 정확한 주문 등록 API가 확인되지 않음 |
+| 사방넷 주문 신규 등록 | 신규 등록 API·웹훅 미제공 확인. 시퀸즈 `[20316]` 전용 엑셀 대량등록 사용 |
 | 상품 상세 이미지/설명 필드 | 테스트 상품 응답으로 제공 범위 확인 필요 |
 | 재고 원천 | 사방넷 상품 API 재고와 풀필먼트 재고 중 선택 필요 |
 | 본인인증 응답 필드 | 업체 확정 후 필드 확정 |
@@ -1095,7 +1095,7 @@ Django 기본 `AbstractUser` 확장을 전제로 한다.
 | --- | --- | --- |
 | `order` | FK Order | 주문 |
 | `provider` | CharField | `toss_payments` |
-| `customer_key_hash` | CharField index | 결제위젯 customerKey 해시 |
+| `customer_key_hash` | CharField index | Standard SDK 결제 인스턴스 customerKey 해시 |
 | `order_id` | CharField index | 토스 `orderId` |
 | `order_name` | CharField | 결제 요청 상품명 |
 | `expected_amount` | BigIntegerField | 서버 계산 결제 예정 금액 |

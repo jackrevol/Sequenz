@@ -1,4 +1,5 @@
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 
 from accounts.models import MemberProfile
 from catalog.models import Brand, Category, Product, ProductListing
@@ -60,6 +61,27 @@ def test_paid_member_can_create_one_review_and_public_can_read_it(api_client, me
     assert ProductReview.objects.count() == 1
     item.refresh_from_db()
     assert item.review_status == "written"
+
+
+@pytest.mark.django_db
+def test_reviewable_list_and_review_image_upload(api_client, member_purchase, settings, tmp_path):
+    settings.MEDIA_ROOT = tmp_path
+    user, _, item, _ = member_purchase
+    api_client.force_login(user)
+    reviewable = api_client.get("/api/community/reviews/reviewable/")
+    image = SimpleUploadedFile("fit.jpg", b"image-bytes", content_type="image/jpeg")
+
+    created = api_client.post(
+        "/api/community/reviews/",
+        {"order_item_id": item.id, "rating": 5, "body": "사진 후기", "images": [image]},
+        format="multipart",
+    )
+
+    assert reviewable.status_code == 200
+    assert reviewable.json()["results"][0]["order_item_id"] == item.id
+    assert created.status_code == 201
+    assert created.json()["image_urls"][0].endswith("fit.jpg")
+    assert api_client.get("/api/community/reviews/reviewable/").json()["results"] == []
 
 
 @pytest.mark.django_db

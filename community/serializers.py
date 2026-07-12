@@ -8,11 +8,20 @@ from .models import CustomerInquiry, ProductReview
 
 class ProductReviewSerializer(serializers.ModelSerializer):
     reviewer_name = serializers.SerializerMethodField()
+    image_urls = serializers.SerializerMethodField()
 
     def get_reviewer_name(self, review):
         profile = getattr(review.user, "member_profile", None)
         name = profile.name if profile else review.user.username
         return name[:1] + "*" * max(len(name) - 1, 1)
+
+    def get_image_urls(self, review):
+        urls = list(review.image_urls or [])
+        request = self.context.get("request")
+        for image in review.images.all():
+            url = image.image.url
+            urls.append(request.build_absolute_uri(url) if request else url)
+        return urls
 
     class Meta:
         model = ProductReview

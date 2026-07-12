@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Brand, Category, Product, ProductImage, ProductListing, ProductListingVariant, ProductSyncSnapshot, ProductVariant
+from .models import Brand, Category, Product, ProductAttribute, ProductImage, ProductInformationNotice, ProductListing, ProductListingVariant, ProductSyncSnapshot, ProductVariant, SearchKeyword
 
 
 @admin.register(Brand)
@@ -33,13 +33,24 @@ class ProductImageInline(admin.TabularInline):
     readonly_fields = ("sabangnet_image_srno",)
 
 
+class ProductAttributeInline(admin.TabularInline):
+    model = ProductAttribute
+    extra = 0
+
+
+class ProductInformationNoticeInline(admin.StackedInline):
+    model = ProductInformationNotice
+    extra = 0
+    max_num = 1
+
+
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     list_display = ("name", "custom_product_code", "brand", "category", "selling_price", "supply_status", "synced_at")
     list_filter = ("brand", "category", "supply_status")
     search_fields = ("name", "custom_product_code", "sabangnet_product_code", "product_tags")
     readonly_fields = ("sabangnet_product_code", "raw_sabangnet_payload", "synced_at")
-    inlines = (ProductVariantInline, ProductImageInline)
+    inlines = (ProductVariantInline, ProductImageInline, ProductAttributeInline, ProductInformationNoticeInline)
 
 
 class ProductListingVariantInline(admin.TabularInline):
@@ -72,3 +83,10 @@ class ProductSyncSnapshotAdmin(admin.ModelAdmin):
     list_filter = ("status", "synced_at")
     search_fields = ("sabangnet_product_code", "product__name", "error_message")
     readonly_fields = tuple(field.name for field in ProductSyncSnapshot._meta.fields)
+
+
+@admin.register(SearchKeyword)
+class SearchKeywordAdmin(admin.ModelAdmin):
+    list_display = ("keyword", "search_count", "is_recommended", "is_visible", "sort_order", "last_searched_at")
+    list_editable = ("is_recommended", "is_visible", "sort_order")
+    search_fields = ("keyword",)

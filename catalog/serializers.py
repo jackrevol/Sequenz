@@ -1,12 +1,24 @@
 from rest_framework import serializers
 
-from .models import Brand, Category, Product, ProductImage, ProductListing, ProductListingVariant
+from .models import Brand, Category, Product, ProductAttribute, ProductImage, ProductInformationNotice, ProductListing, ProductListingVariant, SearchKeyword
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductImage
         fields = ["id", "image_url", "alt_text", "sort_order", "is_primary"]
+
+
+class ProductAttributeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductAttribute
+        fields = ["name", "value"]
+
+
+class ProductInformationNoticeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductInformationNotice
+        fields = ["notice_type", "fields", "updated_at"]
 
 
 class BrandSerializer(serializers.ModelSerializer):
@@ -27,10 +39,18 @@ class ProductSummarySerializer(serializers.ModelSerializer):
     brand = BrandSerializer(read_only=True)
     category = CategorySerializer(read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
+    attributes = ProductAttributeSerializer(many=True, read_only=True)
+    information_notice = ProductInformationNoticeSerializer(read_only=True)
 
     class Meta:
         model = Product
-        fields = ["id", "sabangnet_product_code", "custom_product_code", "name", "detail_html", "brand", "category", "images"]
+        fields = ["id", "sabangnet_product_code", "custom_product_code", "name", "detail_html", "brand", "category", "images", "attributes", "information_notice"]
+
+
+class SearchKeywordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SearchKeyword
+        fields = ["keyword", "search_count", "is_recommended"]
 
 
 class ProductListingVariantSerializer(serializers.ModelSerializer):

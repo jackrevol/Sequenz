@@ -1,52 +1,6 @@
 import pytest
 
-from catalog.models import Brand, Category, Product, ProductListing, ProductVariant
 from commerce.models import Cart, Order, PaymentAttempt
-
-
-@pytest.fixture
-def listing_variant(db):
-    brand = Brand.objects.create(name="Sequenz", slug="sequenz", sort_order=1)
-    category = Category.objects.create(name="Swimwear", slug="swimwear", level=1, sort_order=1)
-    product = Product.objects.create(
-        brand=brand,
-        category=category,
-        sabangnet_product_code="SB-P-2000",
-        custom_product_code="SEQ-P-2000",
-        name="Panel Rashguard",
-        consumer_price=89000,
-        selling_price=79000,
-        tax_code="TAXABLE",
-        supply_status="IN_SUPPLY",
-    )
-    variant = ProductVariant.objects.create(
-        product=product,
-        variant_code="SEQ-P-2000-WHT-L",
-        barcode="880000000002",
-        option_display_name="White / L",
-        additional_amount=0,
-        stock_quantity=5,
-        safety_stock_quantity=1,
-        supply_status="SALE",
-    )
-    listing = ProductListing.objects.create(
-        product=product,
-        listing_code="LIST-2000",
-        sales_channel="main_mall",
-        status="active",
-        display_name="Panel Rashguard",
-        slug="panel-rashguard",
-        consumer_price_snapshot=89000,
-        selling_price_snapshot=79000,
-        price_source="sabangnet",
-    )
-    return listing.variants.create(
-        variant=variant,
-        status="active",
-        additional_amount_snapshot=0,
-        stock_display_policy="show",
-        sort_order=1,
-    )
 
 
 @pytest.mark.django_db
@@ -156,3 +110,18 @@ def test_order_creation_snapshots_listing_and_creates_payment_attempt(api_client
         HTTP_X_GUEST_KEY="another-guest",
     )
     assert hidden.status_code == 404
+
+    lookup = api_client.post(
+        "/api/commerce/orders/guest-lookup/",
+        {"order_number": order.order_number, "buyer_name": "Hong Gildong", "buyer_phone": "010-1234-5678"},
+        format="json",
+    )
+    assert lookup.status_code == 200
+    assert lookup.json()["order_number"] == order.order_number
+
+    wrong_phone = api_client.post(
+        "/api/commerce/orders/guest-lookup/",
+        {"order_number": order.order_number, "buyer_name": "Hong Gildong", "buyer_phone": "01000000000"},
+        format="json",
+    )
+    assert wrong_phone.status_code == 404

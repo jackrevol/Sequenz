@@ -25,6 +25,8 @@
 
     <section class="filters" aria-label="상품 필터">
       <div id="brands" class="chips"></div>
+      <div id="attributeFilters" class="attribute-filters"></div>
+      <div id="searchKeywords" class="chips search-keywords"></div>
       <div class="search-row">
         <input id="searchInput" type="search" placeholder="상품, 브랜드 검색" aria-label="상품 검색">
         <select id="sortSelect" aria-label="정렬">
@@ -71,8 +73,13 @@
     <div id="orderContent"></div>
   </dialog>
 
+  <dialog id="supportDialog" class="sheet">
+    <button class="sheet-close" data-close="supportDialog" aria-label="닫기">×</button>
+    <div id="supportContent"></div>
+  </dialog>
+
   <nav class="bottom-nav" aria-label="주요 메뉴">
-    <a href="/">HOME</a><a href="#products">SHOP</a><button id="bottomCartButton">BAG</button><button id="bottomAccountButton">MY</button>
+    <a href="/">HOME</a><a href="#products">SHOP</a><button id="supportButton">HELP</button><button id="bottomCartButton">BAG</button><button id="bottomAccountButton">MY</button>
   </nav>
   <div id="toast" class="toast" role="status"></div>
   <script src="https://js.tosspayments.com/v2/standard"></script>

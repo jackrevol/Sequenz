@@ -62,6 +62,28 @@ def test_login_and_logout_use_session(api_client, django_user_model):
 
 
 @pytest.mark.django_db
+def test_member_updates_profile(api_client, django_user_model):
+    user = django_user_model.objects.create_user(username="profile", email="old@example.com", password="password")
+    MemberProfile.objects.create(
+        user=user, name="Old", phone="01010000000", terms_agreed_at="2026-07-12T00:00:00Z"
+    )
+    api_client.force_login(user)
+
+    response = api_client.patch(
+        "/api/accounts/me/",
+        {"email": "new@example.com", "name": "New", "phone": "01020000000", "marketing_agreed": True},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "New"
+    user.refresh_from_db()
+    user.member_profile.refresh_from_db()
+    assert user.email == "new@example.com"
+    assert user.member_profile.marketing_agreed is True
+
+
+@pytest.mark.django_db
 def test_registration_rejects_missing_required_terms(api_client):
     payload = {**REGISTRATION, "username": "no_terms", "email": "no-terms@example.com", "phone": "01055556666", "terms_agreed": False}
     response = api_client.post("/api/accounts/register/", payload, format="json")

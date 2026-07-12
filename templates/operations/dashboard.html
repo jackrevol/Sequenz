@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>SEQUENZ 운영 콘솔</title>
+  <style>
+    body{margin:0;background:#f4f5f7;color:#17202a;font:14px Arial,sans-serif}header{padding:20px 28px;background:#111;color:#fff;display:flex;justify-content:space-between}main{padding:24px;max-width:1400px;margin:auto}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card,section{background:#fff;border:1px solid #ddd;padding:18px}.card strong{display:block;font-size:25px;margin-top:8px}.grid{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-top:18px}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px;border-bottom:1px solid #eee}input,button{padding:9px;border:1px solid #bbb}button{background:#111;color:#fff}.tools{display:flex;gap:7px;margin-bottom:12px}.error{color:#b42318}@media(max-width:800px){.cards,.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<header><strong>SEQUENZ OPERATIONS</strong><a href="/admin/" style="color:#fff">Django 관리자</a></header>
+<main>
+  <div id="summary" class="cards"></div>
+  <div class="grid">
+    <section><h2>최근 주문·배송</h2><table><thead><tr><th>주문번호</th><th>주문자</th><th>연락처</th><th>상태</th><th>금액</th></tr></thead><tbody id="orders"></tbody></table></section>
+    <section><h2>결제 재조회·보정</h2><div class="tools"><input id="orderNumber" placeholder="주문번호"><button id="reconcile">재조회</button></div><pre id="reconcileResult"></pre><h2>배송 정책</h2><form id="shippingPolicy"><input name="name" placeholder="정책명"><input name="base_fee" type="number" min="0" placeholder="배송비"><input name="free_shipping_threshold" type="number" min="0" placeholder="무료배송 기준"><button>저장</button></form><h2>최근 연동 오류</h2><div id="logs"></div></section>
+  </div>
+  <section style="margin-top:18px"><h2>30일 매출</h2><table><thead><tr><th>일자</th><th>주문</th><th>매출</th></tr></thead><tbody id="sales"></tbody></table></section>
+</main>
+<script>
+const csrf=document.querySelector('meta[name=csrf-token]').content, won=v=>`${Number(v).toLocaleString('ko-KR')}원`;
+async function api(url,options={}){const response=await fetch(url,{...options,headers:{'Content-Type':'application/json','X-CSRFToken':csrf,...options.headers}});const body=await response.json();if(!response.ok)throw new Error(body.detail||'처리 실패');return body}
+async function load(){const [data,sales,logs,policy]=await Promise.all([api('/operations/api/dashboard/'),api('/operations/api/sales/'),api('/operations/api/logs/'),api('/operations/api/shipping-policy/')]);const s=data.summary;document.querySelector('#summary').innerHTML=`<div class="card">30일 결제매출<strong>${won(s.paid_sales_30d)}</strong></div><div class="card">30일 결제주문<strong>${s.paid_orders_30d}</strong></div><div class="card">사방넷 실패<strong>${s.failed_exports}</strong></div><div class="card">24시간 연동오류<strong>${s.integration_errors_24h}</strong></div>`;document.querySelector('#orders').innerHTML=data.recent_orders.map(o=>`<tr><td>${o.order_number}</td><td>${o.buyer_name}</td><td>${o.buyer_phone}</td><td>${o.status} / ${o.fulfillment_status}</td><td>${won(o.payment_amount)}</td></tr>`).join('');document.querySelector('#sales').innerHTML=sales.results.map(r=>`<tr><td>${r.day}</td><td>${r.order_count}</td><td>${won(r.sales)}</td></tr>`).join('');document.querySelector('#logs').innerHTML=logs.results.slice(0,12).map(log=>`<p class="${log.error_code?'error':''}">${log.provider} · ${log.operation}<br><small>${log.error_code||log.response_status||''} ${log.error_message||''}</small></p>`).join('')||'<p>연동 로그가 없습니다.</p>';const form=document.querySelector('#shippingPolicy');form.name.value=policy.name;form.base_fee.value=policy.base_fee;form.free_shipping_threshold.value=policy.free_shipping_threshold}
+document.querySelector('#reconcile').onclick=async()=>{const order=document.querySelector('#orderNumber').value.trim();if(!order)return;try{document.querySelector('#reconcileResult').textContent=JSON.stringify(await api(`/operations/api/payments/${encodeURIComponent(order)}/reconcile/`,{method:'POST'}),null,2);await load()}catch(error){document.querySelector('#reconcileResult').textContent=error.message}};load();
+document.querySelector('#shippingPolicy').onsubmit=async event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));data.base_fee=Number(data.base_fee);data.free_shipping_threshold=Number(data.free_shipping_threshold);try{await api('/operations/api/shipping-policy/',{method:'PATCH',body:JSON.stringify(data)});await load()}catch(error){alert(error.message)}};
+</script>
+</body>
+</html>

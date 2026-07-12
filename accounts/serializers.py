@@ -84,6 +84,38 @@ class MemberSerializer(serializers.ModelSerializer):
         fields = ["id", "username", "email", "name", "phone", "marketing_agreed", "social_connections"]
 
 
+class MemberUpdateSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    name = serializers.CharField(max_length=120)
+    phone = serializers.CharField(max_length=40)
+    marketing_agreed = serializers.BooleanField(required=False)
+
+    def validate_email(self, value):
+        user = self.context["request"].user
+        if User.objects.exclude(pk=user.pk).filter(email__iexact=value).exists():
+            raise serializers.ValidationError("이미 사용 중인 이메일입니다.")
+        return value.lower()
+
+    def validate_phone(self, value):
+        user = self.context["request"].user
+        if MemberProfile.objects.exclude(user=user).filter(phone=value).exists():
+            raise serializers.ValidationError("이미 사용 중인 휴대폰 번호입니다.")
+        return value
+
+    @transaction.atomic
+    def update(self, user, validated_data):
+        profile = user.member_profile
+        user.email = validated_data["email"]
+        user.save(update_fields=["email"])
+        profile.name = validated_data["name"]
+        profile.phone = validated_data["phone"]
+        if "marketing_agreed" in validated_data and profile.marketing_agreed != validated_data["marketing_agreed"]:
+            profile.marketing_agreed = validated_data["marketing_agreed"]
+            profile.marketing_agreed_at = timezone.now() if profile.marketing_agreed else None
+        profile.save(update_fields=["name", "phone", "marketing_agreed", "marketing_agreed_at", "updated_at"])
+        return user
+
+
 class ShippingAddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShippingAddress

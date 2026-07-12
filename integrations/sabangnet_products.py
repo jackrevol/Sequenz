@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
-from catalog.models import Brand, Product, ProductImage, ProductListingVariant, ProductSyncSnapshot, ProductVariant
+from catalog.models import Brand, Category, Product, ProductAttribute, ProductImage, ProductInformationNotice, ProductListingVariant, ProductSyncSnapshot, ProductVariant
 
 
 class SabangnetProductError(Exception):
@@ -56,9 +56,11 @@ def sync_product(product_data):
         raise SabangnetProductError("productCode가 없는 상품은 동기화할 수 없습니다.")
     custom_code = _nullable_text(_value(product_data, "customProductCode", "CUSTOM_PRODUCT_CODE"))
     brand = _sync_brand(_value(product_data, "brandName", "BRAND_NAME"))
+    category = _sync_product_category(product_data)
     defaults = {
         "custom_product_code": custom_code,
         "brand": brand,
+        "category": category,
         "name": str(_value(product_data, "productName", "PRODUCT_NAME", default=product_code)),
         "english_name": str(_value(product_data, "engProductName", "ENG_PRODUCT_NAME", default="")),
         "model_name": str(_value(product_data, "modelName", "MODEL_NAME", default="")),
@@ -82,6 +84,8 @@ def sync_product(product_data):
     product, created = Product.objects.update_or_create(sabangnet_product_code=product_code, defaults=defaults)
     variants = _sync_variants(product, product_data)
     images = _sync_images(product, product_data)
+    _sync_attributes(product, product_data)
+    _sync_information_notice(product, product_data)
     _sync_listings(product, variants)
     ProductSyncSnapshot.objects.create(
         product=product,
@@ -119,6 +123,29 @@ def _sync_brand(name):
         suffix += 1
         slug = f"{base}-{suffix}"
     return Brand.objects.create(name=name, slug=slug)
+
+
+def _sync_product_category(payload):
+    code = str(_value(payload, "categoryCode", "myCategoryCode", "CATEGORY_CODE", default="")).strip()
+    name = str(_value(payload, "categoryName", "myCategoryName", "CATEGORY_NAME", default="")).strip()
+    if not code:
+        return None
+    category = Category.objects.filter(sabangnet_code=code).first()
+    if category:
+        return category
+    return Category.objects.create(
+        sabangnet_code=code, name=name or code, slug=_unique_category_slug(name or code), level=1
+    )
+
+
+def _unique_category_slug(name, parent=None):
+    base = slugify(name, allow_unicode=True) or f"category-{hashlib.sha1(name.encode()).hexdigest()[:8]}"
+    slug = base
+    suffix = 1
+    while Category.objects.filter(parent=parent, slug=slug).exists():
+        suffix += 1
+        slug = f"{base}-{suffix}"
+    return slug
 
 
 def _sync_variants(product, payload):
@@ -175,6 +202,53 @@ def _sync_images(product, payload):
         synced.append(image_obj)
     product.images.filter(source=ProductImage.Source.SABANGNET).exclude(image_url__in=urls).delete()
     return synced
+
+
+def _sync_attributes(product, payload):
+    rows = _value(payload, "attributes", "productAttributes", "attributeInfo", default=[]) or []
+    values = []
+    if isinstance(rows, dict):
+        rows = [{"name": key, "value": value} for key, value in rows.items()]
+    for row in rows:
+        name = str(_value(row, "name", "attributeName", "optionName", default="")).strip()
+        value = str(_value(row, "value", "attributeValue", "optionValue", default="")).strip()
+        if name and value:
+            values.append((name, value))
+    option_rows = _value(_value(payload, "optionInfo", default={}) or {}, "options", default=[]) or []
+    for row in option_rows:
+        name = str(_value(row, "optionName", default="")).strip()
+        value = str(_value(row, "optionDetailName", default="")).strip()
+        if name and value:
+            values.append((name, value))
+    keep = []
+    for index, (name, value) in enumerate(dict.fromkeys(values)):
+        attribute, _ = ProductAttribute.objects.update_or_create(
+            product=product, name=name, value=value,
+            defaults={"source": "sabangnet", "sort_order": index, "is_filterable": True},
+        )
+        keep.append(attribute.pk)
+    product.attributes.filter(source="sabangnet").exclude(pk__in=keep).delete()
+
+
+def _sync_information_notice(product, payload):
+    notice = _value(payload, "productInfoNotice", "productInformationNotice", "noticeInfo", default=None)
+    if not notice:
+        return
+    if isinstance(notice, list):
+        fields = {}
+        for row in notice:
+            name = str(_value(row, "name", "itemName", "title", default="")).strip()
+            value = str(_value(row, "value", "itemValue", "content", default="")).strip()
+            if name:
+                fields[name] = value
+        notice_type = ""
+    else:
+        notice_type = str(_value(notice, "type", "noticeType", default=""))
+        fields = _value(notice, "fields", "items", default=notice) or {}
+    ProductInformationNotice.objects.update_or_create(
+        product=product,
+        defaults={"notice_type": notice_type, "fields": fields, "source": "sabangnet", "synced_at": timezone.now()},
+    )
 
 
 def _sync_listings(product, variants):

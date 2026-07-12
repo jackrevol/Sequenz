@@ -1,7 +1,12 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import CustomerInquiry, ProductReview
+from .models import CustomerInquiry, ProductReview, ProductReviewImage
+
+
+class ProductReviewImageInline(admin.TabularInline):
+    model = ProductReviewImage
+    extra = 0
 
 
 @admin.register(ProductReview)
@@ -11,6 +16,7 @@ class ProductReviewAdmin(admin.ModelAdmin):
     list_editable = ("is_visible",)
     search_fields = ("listing__display_name", "user__username", "title", "body")
     readonly_fields = ("user", "order_item", "listing", "created_at", "updated_at")
+    inlines = (ProductReviewImageInline,)
 
 
 @admin.register(CustomerInquiry)

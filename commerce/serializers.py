@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from catalog.models import ProductListingVariant
 
-from .models import CartItem, Order, OrderItem, Shipment
+from .models import CartItem, Order, OrderClaim, OrderClaimItem, OrderItem, Shipment
 
 
 class CartItemCreateSerializer(serializers.Serializer):
@@ -62,6 +62,8 @@ class OrderCreateSerializer(serializers.Serializer):
     address1 = serializers.CharField(max_length=240)
     address2 = serializers.CharField(max_length=240, required=False, allow_blank=True)
     delivery_memo = serializers.CharField(max_length=240, required=False, allow_blank=True)
+    coupon_code = serializers.CharField(max_length=80, required=False, allow_blank=True)
+    point_to_use = serializers.IntegerField(min_value=0, required=False, default=0)
 
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -83,6 +85,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "fulfillment_status",
             "items_subtotal",
             "shipping_fee",
+            "coupon_discount_amount",
+            "point_used_amount",
             "payment_amount",
             "buyer_name",
             "recipient_name",
@@ -100,7 +104,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
         model = OrderItem
         fields = [
             "id", "listing_name_snapshot", "product_name_snapshot", "option_name_snapshot",
-            "ordered_quantity", "unit_price", "line_total",
+            "ordered_quantity", "cancelled_quantity", "returned_quantity", "unit_price", "line_total",
             "review_status",
         ]
 
@@ -123,3 +127,41 @@ class TossPaymentConfirmSerializer(serializers.Serializer):
 
 class OrderCancellationSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=240)
+
+
+class OrderClaimItemInputSerializer(serializers.Serializer):
+    order_item_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1)
+
+
+class OrderClaimCreateSerializer(serializers.Serializer):
+    claim_type = serializers.ChoiceField(choices=OrderClaim.ClaimType.choices)
+    reason = serializers.CharField(max_length=240)
+    detail = serializers.CharField(required=False, allow_blank=True)
+    items = OrderClaimItemInputSerializer(many=True, allow_empty=False)
+
+
+class OrderClaimItemSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="order_item.product_name_snapshot")
+    option_name = serializers.CharField(source="order_item.option_name_snapshot")
+
+    class Meta:
+        model = OrderClaimItem
+        fields = ["order_item_id", "product_name", "option_name", "quantity"]
+
+
+class OrderClaimSerializer(serializers.ModelSerializer):
+    items = OrderClaimItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = OrderClaim
+        fields = [
+            "id", "claim_type", "status", "reason", "detail", "refund_amount",
+            "restored_point_amount", "items", "requested_at", "completed_at",
+        ]
+
+
+class GuestOrderLookupSerializer(serializers.Serializer):
+    order_number = serializers.CharField(max_length=40)
+    buyer_name = serializers.CharField(max_length=120)
+    buyer_phone = serializers.CharField(max_length=40)

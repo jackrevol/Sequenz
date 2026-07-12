@@ -11,14 +11,28 @@ from rest_framework.views import APIView
 
 from integrations.models import SabangnetOrderExport
 from integrations.toss import TossPaymentError, cancel_toss_payment, confirm_toss_payment
+from benefits.services import (
+    BenefitValidationError,
+    apply_order_benefits,
+    quote_member_benefits,
+    restore_order_benefits,
+    restore_partial_order_points,
+    shipping_fee_for,
+)
 
-from .models import Cart, CartItem, Order, OrderCancellation, OrderItem, OrderStatusHistory, Payment, PaymentAttempt, hash_guest_key
+from .models import (
+    Cart, CartItem, Order, OrderCancellation, OrderClaim, OrderClaimItem, OrderItem,
+    OrderStatusHistory, Payment, PaymentAttempt, hash_guest_key,
+)
 from .serializers import (
     CartItemCreateSerializer,
     CartItemQuantitySerializer,
     CartItemSerializer,
     OrderCreateSerializer,
     OrderCancellationSerializer,
+    OrderClaimCreateSerializer,
+    OrderClaimSerializer,
+    GuestOrderLookupSerializer,
     OrderSerializer,
     TossPaymentConfirmSerializer,
 )
@@ -105,13 +119,34 @@ class CartItemDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class CartBenefitQuoteView(APIView):
+    def post(self, request):
+        cart = get_active_cart(request)
+        if cart is None:
+            return Response({"detail": "X-Guest-Key header is required."}, status=status.HTTP_400_BAD_REQUEST)
+        subtotal = sum(item.line_total for item in cart.items.all())
+        if subtotal <= 0:
+            return Response({"detail": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            quote = quote_member_benefits(
+                request.user, subtotal, request.data.get("coupon_code", ""), request.data.get("point_to_use", 0)
+            )
+        except (BenefitValidationError, TypeError, ValueError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({key: quote[key] for key in (
+            "shipping_fee", "coupon_discount_amount", "point_used_amount", "payment_amount"
+        )})
+
+
 def _cart_summary(cart):
     items = list(cart.items.all())
+    subtotal = sum(item.line_total for item in items)
+    shipping_fee = shipping_fee_for(subtotal)
     return {
         "item_count": sum(item.quantity for item in items),
-        "items_subtotal": sum(item.line_total for item in items),
-        "shipping_fee": 0,
-        "payment_amount": sum(item.line_total for item in items),
+        "items_subtotal": subtotal,
+        "shipping_fee": shipping_fee,
+        "payment_amount": subtotal + shipping_fee,
     }
 
 
@@ -146,6 +181,15 @@ class OrderView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
         subtotal = sum(item.line_total for item in cart_items)
+        try:
+            benefit_quote = quote_member_benefits(
+                request.user,
+                subtotal,
+                coupon_code=data.get("coupon_code", ""),
+                point_to_use=data.get("point_to_use", 0),
+            )
+        except BenefitValidationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         order = Order.objects.create(
             order_number=Order.new_order_number(),
             user=cart.user,
@@ -160,8 +204,10 @@ class OrderView(APIView):
             address2=data.get("address2", ""),
             delivery_memo=data.get("delivery_memo", ""),
             items_subtotal=subtotal,
-            shipping_fee=0,
-            payment_amount=subtotal,
+            shipping_fee=benefit_quote["shipping_fee"],
+            coupon_discount_amount=benefit_quote["coupon_discount_amount"],
+            point_used_amount=benefit_quote["point_used_amount"],
+            payment_amount=benefit_quote["payment_amount"],
         )
         for item in cart_items:
             listing = item.listing
@@ -190,6 +236,11 @@ class OrderView(APIView):
             order_name=_order_name(cart_items),
             expected_amount=order.payment_amount,
         )
+        try:
+            apply_order_benefits(order, benefit_quote)
+        except BenefitValidationError as exc:
+            transaction.set_rollback(True)
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         cart.status = Cart.Status.ORDERED
         cart.save(update_fields=["status", "updated_at"])
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
@@ -218,6 +269,25 @@ class MemberOrderListView(APIView):
             return Response({"detail": "Authentication credentials were not provided."}, status=status.HTTP_403_FORBIDDEN)
         orders = Order.objects.filter(user=request.user).prefetch_related("items", "shipments").order_by("-ordered_at")
         return Response({"results": OrderSerializer(orders, many=True).data})
+
+
+class GuestOrderLookupView(APIView):
+    authentication_classes = []
+
+    def post(self, request):
+        serializer = GuestOrderLookupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        order = Order.objects.prefetch_related("items", "shipments").filter(
+            order_number=data["order_number"], user__isnull=True, buyer_name=data["buyer_name"]
+        ).first()
+        if order is None or _digits(order.buyer_phone) != _digits(data["buyer_phone"]):
+            return Response({"detail": "일치하는 비회원 주문을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(OrderSerializer(order).data)
+
+
+def _digits(value):
+    return "".join(char for char in value if char.isdigit())
 
 
 def _order_name(cart_items):
@@ -395,6 +465,76 @@ class OrderCancellationView(APIView):
         return Response(_cancellation_response(cancellation), status=status.HTTP_200_OK)
 
 
+class OrderClaimView(APIView):
+    def get(self, request, order_number):
+        order = _owned_order(request, order_number)
+        if order is None:
+            return Response({"detail": "Unknown order."}, status=status.HTTP_404_NOT_FOUND)
+        claims = order.claims.prefetch_related("items__order_item")
+        return Response({"results": OrderClaimSerializer(claims, many=True).data})
+
+    def post(self, request, order_number):
+        serializer = OrderClaimCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = _owned_order(request, order_number)
+        if order is None:
+            return Response({"detail": "Unknown order."}, status=status.HTTP_404_NOT_FOUND)
+        data = serializer.validated_data
+        claim_type = data["claim_type"]
+        error = _validate_claim_state(order, claim_type)
+        if error:
+            return Response({"detail": error}, status=status.HTTP_409_CONFLICT)
+        try:
+            selected = _validate_claim_items(order, data["items"], claim_type)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        refund_amount = 0
+        restored_points = 0
+        if claim_type == OrderClaim.ClaimType.PARTIAL_CANCEL:
+            gross = sum(item.unit_price * quantity for item, quantity in selected)
+            coupon_share = order.coupon_discount_amount * gross // max(order.items_subtotal, 1)
+            restored_points = order.point_used_amount * gross // max(order.items_subtotal, 1)
+            refund_amount = gross - coupon_share - restored_points
+            payment = order.payments.filter(status="DONE").order_by("-created_at").first()
+            if payment is None or refund_amount <= 0 or refund_amount > payment.balance_amount:
+                return Response({"detail": "부분취소 가능한 결제금액을 확인할 수 없습니다."}, status=status.HTTP_409_CONFLICT)
+        else:
+            payment = None
+
+        with transaction.atomic():
+            claim = OrderClaim.objects.create(
+                order=order,
+                claim_type=claim_type,
+                requested_by=request.user if request.user.is_authenticated else None,
+                reason=data["reason"],
+                detail=data.get("detail", ""),
+                refund_amount=refund_amount,
+                restored_point_amount=restored_points,
+            )
+            OrderClaimItem.objects.bulk_create([
+                OrderClaimItem(claim=claim, order_item=item, quantity=quantity)
+                for item, quantity in selected
+            ])
+        if claim_type != OrderClaim.ClaimType.PARTIAL_CANCEL:
+            claim.refresh_from_db()
+            return Response(OrderClaimSerializer(claim).data, status=status.HTTP_201_CREATED)
+
+        try:
+            toss_response = cancel_toss_payment(
+                payment.payment_key, claim.reason, str(claim.idempotency_key), cancel_amount=refund_amount
+            )
+        except TossPaymentError as exc:
+            claim.status = OrderClaim.Status.FAILED
+            claim.failure_code = exc.code
+            claim.failure_message = str(exc)[:240]
+            claim.save(update_fields=["status", "failure_code", "failure_message", "updated_at"])
+            return Response({"detail": str(exc), "code": exc.code}, status=status.HTTP_502_BAD_GATEWAY)
+        _complete_partial_cancellation(claim.pk, payment.pk, toss_response)
+        claim.refresh_from_db()
+        return Response(OrderClaimSerializer(claim).data, status=status.HTTP_201_CREATED)
+
+
 def _owned_order(request, order_number, for_update=False):
     filters = {"order_number": order_number}
     if request.user.is_authenticated:
@@ -406,6 +546,72 @@ def _owned_order(request, order_number, for_update=False):
         filters["guest_order_key_hash"] = guest_hash
     queryset = Order.objects.select_for_update() if for_update else Order.objects
     return queryset.filter(**filters).first()
+
+
+def _validate_claim_state(order, claim_type):
+    if order.status != Order.Status.PAID:
+        return "결제가 완료된 주문만 신청할 수 있습니다."
+    if claim_type == OrderClaim.ClaimType.PARTIAL_CANCEL:
+        if order.fulfillment_status not in {
+            Order.FulfillmentStatus.PENDING, Order.FulfillmentStatus.PREPARING,
+            Order.FulfillmentStatus.READY_TO_SHIP,
+        }:
+            return "배송이 시작된 상품은 부분취소할 수 없습니다."
+    elif order.fulfillment_status not in {
+        Order.FulfillmentStatus.SHIPPED, Order.FulfillmentStatus.IN_TRANSIT,
+        Order.FulfillmentStatus.DELIVERED,
+    }:
+        return "배송이 시작된 주문만 교환·반품을 신청할 수 있습니다."
+    return ""
+
+
+def _validate_claim_items(order, requested_items, claim_type):
+    ids = [entry["order_item_id"] for entry in requested_items]
+    if len(ids) != len(set(ids)):
+        raise ValueError("같은 주문상품을 중복 선택할 수 없습니다.")
+    items = {item.id: item for item in order.items.filter(id__in=ids)}
+    if len(items) != len(ids):
+        raise ValueError("주문에 포함되지 않은 상품이 있습니다.")
+    selected = []
+    for entry in requested_items:
+        item = items[entry["order_item_id"]]
+        already_claimed = sum(
+            claim_item.quantity for claim_item in item.claim_items.filter(
+                claim__claim_type=claim_type,
+                claim__status__in=[OrderClaim.Status.REQUESTED, OrderClaim.Status.PROCESSING, OrderClaim.Status.COMPLETED],
+            )
+        )
+        if entry["quantity"] > item.ordered_quantity - already_claimed:
+            raise ValueError("신청 가능 수량을 초과했습니다.")
+        selected.append((item, entry["quantity"]))
+    if claim_type == OrderClaim.ClaimType.PARTIAL_CANCEL:
+        remaining = sum(item.ordered_quantity - item.cancelled_quantity for item in order.items.all())
+        if sum(quantity for _, quantity in selected) >= remaining:
+            raise ValueError("전체 수량 취소는 전체 주문취소를 이용해 주세요.")
+    return selected
+
+
+@transaction.atomic
+def _complete_partial_cancellation(claim_id, payment_id, toss_response):
+    claim = OrderClaim.objects.select_for_update().prefetch_related("items__order_item").get(pk=claim_id)
+    payment = Payment.objects.select_for_update().get(pk=payment_id)
+    cancels = toss_response.get("cancels") or []
+    latest = cancels[-1] if cancels else {}
+    claim.status = OrderClaim.Status.COMPLETED
+    claim.transaction_key = latest.get("transactionKey", "")
+    claim.completed_at = timezone.now()
+    claim.save(update_fields=["status", "transaction_key", "completed_at", "updated_at"])
+    payment.balance_amount = toss_response.get("balanceAmount", max(payment.balance_amount - claim.refund_amount, 0))
+    payment.raw_response_summary = _safe_toss_summary(toss_response)
+    payment.save(update_fields=["balance_amount", "raw_response_summary", "updated_at"])
+    for claim_item in claim.items.all():
+        order_item = OrderItem.objects.select_for_update().get(pk=claim_item.order_item_id)
+        order_item.cancelled_quantity += claim_item.quantity
+        order_item.save(update_fields=["cancelled_quantity"])
+    actual_restored = restore_partial_order_points(claim.order, claim.restored_point_amount)
+    if actual_restored != claim.restored_point_amount:
+        claim.restored_point_amount = actual_restored
+        claim.save(update_fields=["restored_point_amount", "updated_at"])
 
 
 def _toss_customer_key(order):
@@ -445,6 +651,7 @@ def _complete_cancellation(cancellation_id, toss_response):
         order=order, source=OrderStatusHistory.Source.SYSTEM, previous_status=previous,
         new_status=Order.FulfillmentStatus.CANCELLED, note="Toss payment cancelled",
     )
+    restore_order_benefits(order)
 
 
 def _cancellation_response(cancellation):

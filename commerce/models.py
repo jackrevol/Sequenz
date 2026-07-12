@@ -264,3 +264,49 @@ class OrderCancellation(models.Model):
     requested_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class OrderClaim(models.Model):
+    class ClaimType(models.TextChoices):
+        PARTIAL_CANCEL = "partial_cancel", "Partial cancellation"
+        EXCHANGE = "exchange", "Exchange"
+        RETURN = "return", "Return"
+
+    class Status(models.TextChoices):
+        REQUESTED = "requested", "Requested"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        REJECTED = "rejected", "Rejected"
+        FAILED = "failed", "Failed"
+
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="claims")
+    claim_type = models.CharField(max_length=30, choices=ClaimType.choices, db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.REQUESTED, db_index=True)
+    requested_by = models.ForeignKey(
+        "auth.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="order_claims"
+    )
+    reason = models.CharField(max_length=240)
+    detail = models.TextField(blank=True)
+    refund_amount = models.PositiveBigIntegerField(default=0)
+    restored_point_amount = models.PositiveBigIntegerField(default=0)
+    idempotency_key = models.CharField(max_length=80, unique=True, default=uuid.uuid4)
+    transaction_key = models.CharField(max_length=200, blank=True)
+    failure_code = models.CharField(max_length=80, blank=True)
+    failure_message = models.CharField(max_length=240, blank=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-requested_at"]
+
+
+class OrderClaimItem(models.Model):
+    claim = models.ForeignKey(OrderClaim, on_delete=models.CASCADE, related_name="items")
+    order_item = models.ForeignKey(OrderItem, on_delete=models.PROTECT, related_name="claim_items")
+    quantity = models.PositiveIntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["claim", "order_item"], name="unique_claim_order_item")
+        ]

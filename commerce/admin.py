@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Cart, CartItem, Order, OrderCancellation, OrderItem, OrderStatusHistory, Payment, PaymentAttempt, Shipment
+from .models import Cart, CartItem, Order, OrderCancellation, OrderClaim, OrderClaimItem, OrderItem, OrderStatusHistory, Payment, PaymentAttempt, Shipment
 
 
 class OrderItemInline(admin.TabularInline):
@@ -74,3 +74,18 @@ class OrderCancellationAdmin(admin.ModelAdmin):
     list_filter = ("status", "requested_at")
     search_fields = ("order__order_number", "payment__payment_key", "reason", "transaction_key")
     readonly_fields = tuple(field.name for field in OrderCancellation._meta.fields)
+
+
+class OrderClaimItemInline(admin.TabularInline):
+    model = OrderClaimItem
+    extra = 0
+    readonly_fields = ("order_item", "quantity")
+
+
+@admin.register(OrderClaim)
+class OrderClaimAdmin(admin.ModelAdmin):
+    list_display = ("order", "claim_type", "status", "refund_amount", "reason", "requested_at")
+    list_filter = ("claim_type", "status", "requested_at")
+    search_fields = ("order__order_number", "reason", "transaction_key")
+    readonly_fields = ("refund_amount", "restored_point_amount", "idempotency_key", "transaction_key", "requested_at", "completed_at")
+    inlines = (OrderClaimItemInline,)

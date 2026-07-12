@@ -123,6 +123,10 @@ def _update_order_status(order_id, raw_status, sabangnet_order_no, mapped_status
         )
         changed = True
     order.save(update_fields=update_fields)
+    if mapped_status == Order.FulfillmentStatus.DELIVERED and previous != Order.FulfillmentStatus.DELIVERED:
+        from benefits.services import complete_delivered_order_benefits
+
+        complete_delivered_order_benefits(order)
     return changed
 
 

@@ -9,7 +9,7 @@ from catalog.serializers import ProductListingSerializer
 from commerce.models import hash_guest_key
 
 from .models import RecentlyViewedItem, ShippingAddress, WishlistItem
-from .serializers import LoginSerializer, MemberSerializer, RegistrationSerializer, ShippingAddressSerializer
+from .serializers import LoginSerializer, MemberSerializer, MemberUpdateSerializer, RegistrationSerializer, ShippingAddressSerializer
 
 
 class RegistrationView(APIView):
@@ -47,6 +47,12 @@ class MeView(APIView):
 
     def get(self, request):
         return Response(MemberSerializer(request.user).data)
+
+    def patch(self, request):
+        serializer = MemberUpdateSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        user = serializer.update(request.user, serializer.validated_data)
+        return Response(MemberSerializer(user).data)
 
 
 class SocialConnectionStartView(APIView):

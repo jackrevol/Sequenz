@@ -3,7 +3,7 @@ from django.utils import timezone
 
 from catalog.serializers import ProductListingSerializer
 
-from .models import EditorialCollection, HomeBanner
+from .models import EditorialCollection, FAQ, HomeBanner, Lookbook, Notice, PolicyPage, Promotion
 
 
 class HomeBannerSerializer(serializers.ModelSerializer):
@@ -33,3 +33,47 @@ class EditorialCollectionSerializer(serializers.ModelSerializer):
     class Meta:
         model = EditorialCollection
         fields = ["id", "title", "slug", "summary", "hero_image_url", "listings"]
+
+
+class CuratedContentSerializer(serializers.ModelSerializer):
+    listings = serializers.SerializerMethodField()
+
+    def get_listings(self, instance):
+        relation = instance.promotion_listings if isinstance(instance, Promotion) else instance.lookbook_listings
+        return ProductListingSerializer([link.listing for link in relation.all()], many=True).data
+
+
+class PromotionSerializer(CuratedContentSerializer):
+    class Meta:
+        model = Promotion
+        fields = ["id", "title", "slug", "summary", "hero_image_url", "body_html", "listings"]
+
+
+class LookbookSerializer(CuratedContentSerializer):
+    brand_name = serializers.CharField(source="brand.name", default="")
+    images = serializers.SerializerMethodField()
+
+    def get_images(self, instance):
+        return [{"image_url": image.image_url, "caption": image.caption} for image in instance.images.all()]
+
+    class Meta:
+        model = Lookbook
+        fields = ["id", "brand_name", "title", "slug", "season_label", "summary", "body_html", "cover_image_url", "images", "listings"]
+
+
+class NoticeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notice
+        fields = ["id", "title", "content", "is_pinned", "published_at"]
+
+
+class FAQSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FAQ
+        fields = ["id", "category", "question", "answer"]
+
+
+class PolicyPageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PolicyPage
+        fields = ["policy_type", "title", "content", "version", "effective_at"]
