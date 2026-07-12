@@ -1,0 +1,26 @@
+{% load static %}
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{{ listing.display_name }} | SEQUENZ</title>
+  <link rel="stylesheet" href="{% static 'storefront/store.css' %}">
+</head>
+<body class="product-page" data-listing-id="{{ listing.id }}">
+  <header class="topbar">
+    <button class="icon-button menu-trigger" id="menuButton" aria-label="전체 메뉴">MENU</button>
+    <a class="logo" href="/">SEQUENZ</a>
+    <div class="top-actions"><a class="icon-button" href="/?openAccount=1">MY</a><a class="icon-button cart-button" href="/?openCart=1">BAG <span id="detailCartCount">0</span></a></div>
+  </header>
+  {% include "storefront/_sidebar.html" %}
+
+  <main id="productPageContent" class="product-page-main" aria-live="polite">
+    <div class="detail-loading">상품 정보를 불러오는 중입니다.</div>
+  </main>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="{% static 'storefront/navigation.js' %}" defer></script>
+  <script src="{% static 'storefront/product-detail.js' %}" defer></script>
+</body>
+</html>

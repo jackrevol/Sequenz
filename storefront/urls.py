@@ -1,6 +1,9 @@
 from django.urls import path
 
-from .views import StorefrontView
+from .views import ProductDetailPageView, StorefrontView
 
 
-urlpatterns = [path("", StorefrontView.as_view(), name="storefront")]
+urlpatterns = [
+    path("products/<int:pk>/", ProductDetailPageView.as_view(), name="product-detail-page"),
+    path("", StorefrontView.as_view(), name="storefront"),
+]

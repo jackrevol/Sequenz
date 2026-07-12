@@ -127,6 +127,8 @@ TOSS_SECRET_KEY = os.environ.get("TOSS_SECRET_KEY", "")
 TOSS_CONFIRM_URL = os.environ.get("TOSS_CONFIRM_URL", "https://api.tosspayments.com/v1/payments/confirm")
 
 SABANGNET_API_BASE_URL = os.environ.get("SABANGNET_API_BASE_URL", "")
+SABANGNET_CLIENT_ID = os.environ.get("SABANGNET_CLIENT_ID", "b3e3cdb2-de0e-4fd8-99c2-e9ad995c5401")
+SABANGNET_CLIENT_SECRET = os.environ.get("SABANGNET_CLIENT_SECRET", "$2a$10$gQrOTxi6PvteD6SShn0Fk.")
 SABANGNET_BEARER_TOKEN = os.environ.get("SABANGNET_BEARER_TOKEN", "")
 SABANGNET_SVC_ACCOUNT_ID = os.environ.get("SABANGNET_SVC_ACCOUNT_ID", "")
 SABANGNET_ORDER_STATUS_MAP = os.environ.get("SABANGNET_ORDER_STATUS_MAP", "{}")

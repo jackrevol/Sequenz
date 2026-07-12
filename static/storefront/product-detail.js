@@ -1,0 +1,94 @@
+const detailGuestKey = localStorage.getItem('sequenzGuestKey') || crypto.randomUUID();
+localStorage.setItem('sequenzGuestKey', detailGuestKey);
+const detailHeaders = {
+  'Content-Type':'application/json',
+  'X-Guest-Key':detailGuestKey,
+  'X-CSRFToken':document.querySelector('meta[name="csrf-token"]').content,
+};
+const detailWon = value => `${Number(value).toLocaleString('ko-KR')}원`;
+const detailEscape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
+const detailSafeUrl = value => { try { const url = new URL(value, location.origin); return ['http:','https:'].includes(url.protocol) ? url.href : '#'; } catch (_) { return '#'; } };
+const detailHtmlToText = value => new DOMParser().parseFromString(String(value || ''), 'text/html').body.textContent || '';
+
+async function detailApi(url, options = {}) {
+  const response = await fetch(url, { ...options, headers:{ ...detailHeaders, ...(options.headers || {}) } });
+  if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.detail || '요청을 처리하지 못했습니다.'); }
+  return response.status === 204 ? null : response.json();
+}
+
+function detailToast(message) {
+  const toast = document.querySelector('#toast');
+  toast.textContent = message; toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 1800);
+}
+
+async function loadProductPage() {
+  const listingId = Number(document.body.dataset.listingId);
+  const [item, reviews, cart, wishlist] = await Promise.all([
+    detailApi(`/api/catalog/listings/${listingId}/`),
+    detailApi(`/api/community/reviews/listing/${listingId}/`),
+    detailApi('/api/commerce/cart/items/'),
+    detailApi('/api/accounts/wishlist/').catch(() => ({ results:[] })),
+  ]);
+  document.querySelector('#detailCartCount').textContent = cart.summary.item_count;
+  detailApi('/api/accounts/recently-viewed/', { method:'POST', body:JSON.stringify({ listing_id:listingId }) }).catch(() => {});
+  const images = item.product.images || [];
+  const available = item.variants.filter(variant => variant.status === 'active' && variant.stock_quantity > 0);
+  const wished = wishlist.results.some(listing => Number(listing.id) === listingId);
+  const gallery = images.length ? images.map((image, index) => `<figure class="pdp-image ${index === 0 ? 'primary' : ''}"><img src="${detailEscape(detailSafeUrl(image.image_url))}" alt="${detailEscape(image.alt_text || item.display_name)}" loading="${index === 0 ? 'eager' : 'lazy'}"></figure>`).join('') : '<div class="pdp-image placeholder">SEQUENZ</div>';
+  const attributes = item.product.attributes?.map(attribute => `<div><dt>${detailEscape(attribute.name)}</dt><dd>${detailEscape(attribute.value)}</dd></div>`).join('') || '';
+  const notice = item.product.information_notice?.fields || {};
+  const reviewCards = reviews.results.map(review => `<article class="review-card pdp-review"><strong>${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</strong><h4>${detailEscape(review.title)}</h4><p>${detailEscape(review.body)}</p>${(review.image_urls || []).length ? `<div class="review-images">${review.image_urls.map(url => `<img src="${detailEscape(detailSafeUrl(url))}" alt="후기 이미지" loading="lazy">`).join('')}</div>` : ''}<small>${detailEscape(review.reviewer_name)} · ${String(review.created_at).slice(0,10)}</small></article>`).join('') || '<p>아직 작성된 후기가 없습니다.</p>';
+
+  document.querySelector('#productPageContent').innerHTML = `
+    <nav class="pdp-breadcrumb"><a href="/">HOME</a><span>/</span><a href="/?category=${encodeURIComponent(item.product.category?.slug || '')}#products">${detailEscape(item.product.category?.name || 'SHOP')}</a></nav>
+    <div class="pdp-layout">
+      <section class="pdp-gallery" aria-label="상품 이미지">${gallery}</section>
+      <aside class="pdp-purchase">
+        <p class="brand-name">${detailEscape(item.product.brand?.name || 'SEQUENZ')}</p>
+        <div class="pdp-title-row"><h1>${detailEscape(item.display_name)}</h1><button id="detailWishButton" class="pdp-wish" aria-label="찜하기">${wished ? '♥' : '♡'}</button></div>
+        <p class="pdp-summary">${detailEscape(item.listing_summary || '')}</p>
+        <p class="pdp-price">${item.consumer_price_snapshot > item.selling_price_snapshot ? `<del>${detailWon(item.consumer_price_snapshot)}</del>` : ''}<strong>${detailWon(item.selling_price_snapshot)}</strong></p>
+        <div class="pdp-delivery"><span>배송</span><p>결제 완료 후 순차 출고<br><small>배송비는 주문서에서 최종 계산됩니다.</small></p></div>
+        <label class="pdp-option-label">옵션 선택<select id="detailVariantSelect" class="variant-select"><option value="">사이즈·컬러를 선택하세요</option>${available.map(variant => `<option value="${Number(variant.id)}" data-price="${Number(item.selling_price_snapshot) + Number(variant.additional_amount_snapshot)}">${detailEscape(variant.option_display_name)} · 재고 ${Number(variant.stock_quantity)}</option>`).join('')}</select></label>
+        <label class="pdp-quantity">수량 <input id="detailQuantity" type="number" min="1" value="1"></label>
+        <div class="pdp-actions"><button id="detailAddCart" class="secondary-button">장바구니</button><button id="detailBuyNow" class="primary-button">바로 구매</button></div>
+      </aside>
+    </div>
+    <section class="pdp-information">
+      <div class="pdp-section"><p class="eyebrow">PRODUCT STORY</p><h2>상품 상세</h2><div class="product-description">${detailEscape(detailHtmlToText(item.listing_detail_html || item.product.detail_html || item.listing_summary || ''))}</div></div>
+      ${attributes ? `<div class="pdp-section"><h2>상품 속성</h2><dl class="product-attributes">${attributes}</dl></div>` : ''}
+      ${Object.keys(notice).length ? `<div class="pdp-section"><h2>상품정보제공고시</h2><dl class="product-attributes">${Object.entries(notice).map(([name,value]) => `<div><dt>${detailEscape(name)}</dt><dd>${detailEscape(value)}</dd></div>`).join('')}</dl></div>` : ''}
+      <div class="pdp-section"><div class="pdp-review-head"><h2>리뷰</h2><strong>${Number(reviews.summary.count)} / ${Number(reviews.summary.average_rating).toFixed(1)}</strong></div>${reviewCards}</div>
+    </section>
+    <div class="mobile-buy-bar"><button id="mobileAddCart" class="secondary-button">BAG</button><button id="mobileBuyNow" class="primary-button">구매하기</button></div>
+  `;
+
+  const addToCart = async buyNow => {
+    const variantId = Number(document.querySelector('#detailVariantSelect').value);
+    const quantity = Number(document.querySelector('#detailQuantity').value);
+    if (!variantId) return detailToast('옵션을 선택해 주세요.');
+    if (!Number.isInteger(quantity) || quantity < 1) return detailToast('수량을 확인해 주세요.');
+    await detailApi('/api/commerce/cart/items/', { method:'POST', body:JSON.stringify({ listing_variant_id:variantId, quantity }) });
+    const updatedCart = await detailApi('/api/commerce/cart/items/');
+    document.querySelector('#detailCartCount').textContent = updatedCart.summary.item_count;
+    if (buyNow) location.href = '/?openCart=1'; else detailToast('장바구니에 담았습니다.');
+  };
+  document.querySelector('#detailAddCart').onclick = () => addToCart(false);
+  document.querySelector('#detailBuyNow').onclick = () => addToCart(true);
+  document.querySelector('#mobileAddCart').onclick = () => addToCart(false);
+  document.querySelector('#mobileBuyNow').onclick = () => addToCart(true);
+  document.querySelector('#detailWishButton').onclick = async event => {
+    try {
+      if (event.currentTarget.textContent === '♥') {
+        await detailApi(`/api/accounts/wishlist/${listingId}/`, { method:'DELETE' }); event.currentTarget.textContent = '♡';
+      } else {
+        await detailApi('/api/accounts/wishlist/', { method:'POST', body:JSON.stringify({ listing_id:listingId }) }); event.currentTarget.textContent = '♥';
+      }
+    } catch (_) { detailToast('로그인 후 찜할 수 있습니다.'); }
+  };
+}
+
+loadProductPage().catch(error => {
+  document.querySelector('#productPageContent').innerHTML = `<div class="detail-error"><h1>상품을 불러오지 못했습니다.</h1><p>${detailEscape(error.message)}</p><a href="/">쇼핑 계속하기</a></div>`;
+});

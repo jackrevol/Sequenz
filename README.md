@@ -73,6 +73,8 @@ Configure credentials and the response item names enabled for the connected Saba
 
 ```bash
 export SABANGNET_API_BASE_URL="https://..."
+export SABANGNET_CLIENT_ID="b3e3cdb2-de0e-4fd8-99c2-e9ad995c5401"
+export SABANGNET_CLIENT_SECRET='$2a$10$gQrOTxi6PvteD6SShn0Fk.'
 export SABANGNET_BEARER_TOKEN="..."
 export SABANGNET_SVC_ACCOUNT_ID="..."
 export SABANGNET_ORDER_STATUS_MAP='{"actual_status_code":"delivered"}'

@@ -21,6 +21,15 @@ def test_container_health_endpoint_checks_database(client):
     assert response.json() == {"status": "ok"}
 
 
+@pytest.mark.django_db
+def test_product_uses_dedicated_detail_page(client, listing_variant):
+    response = client.get(f"/products/{listing_variant.listing_id}/")
+    assert response.status_code == 200
+    assert b"product-page" in response.content
+    assert b"siteSidebar" in response.content
+    assert str(listing_variant.listing_id).encode() in response.content
+
+
 def test_operational_models_are_registered_in_admin():
     assert Brand in admin.site._registry
     assert ProductListing in admin.site._registry

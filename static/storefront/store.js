@@ -1,4 +1,5 @@
-const state = { brand: '', ordering: 'recommended', query: '', attributes: {}, next: null, products: [], wishlist:new Set() };
+const initialParams = new URLSearchParams(location.search);
+const state = { brand: initialParams.get('brand') || '', category: initialParams.get('category') || '', ordering: 'recommended', query: initialParams.get('q') || '', attributes: {}, next: null, products: [], wishlist:new Set() };
 const guestKey = localStorage.getItem('sequenzGuestKey') || crypto.randomUUID();
 localStorage.setItem('sequenzGuestKey', guestKey);
 const headers = { 'Content-Type': 'application/json', 'X-Guest-Key': guestKey };
@@ -20,7 +21,7 @@ async function api(url, options = {}) {
 async function loadBrands() {
   const brands = await api('/api/catalog/brands/');
   const container = document.querySelector('#brands');
-  container.innerHTML = `<button class="chip active" data-brand="">ALL</button>` + brands.map(b => `<button class="chip" data-brand="${h(b.slug)}">${h(b.name)}</button>`).join('');
+  container.innerHTML = `<button class="chip ${state.brand ? '' : 'active'}" data-brand="">ALL</button>` + brands.map(b => `<button class="chip ${state.brand === b.slug ? 'active' : ''}" data-brand="${h(b.slug)}">${h(b.name)}</button>`).join('');
   container.addEventListener('click', event => { if (!event.target.matches('.chip')) return; document.querySelectorAll('.chip').forEach(x => x.classList.remove('active')); event.target.classList.add('active'); state.brand = event.target.dataset.brand; loadProducts(); });
 }
 
@@ -71,6 +72,7 @@ async function loadDiscovery() {
 async function loadProducts(append = false) {
   const params = new URLSearchParams({ ordering: state.ordering });
   if (state.brand) params.set('brand', state.brand);
+  if (state.category) params.set('category', state.category);
   if (state.query) params.set('q', state.query);
   Object.entries(state.attributes).forEach(([name, value]) => params.append('attribute', `${name}:${value}`));
   const data = await api(append && state.next ? state.next : `/api/catalog/listings/?${params}`);
@@ -90,23 +92,11 @@ function productCard(item) {
   const brand = item.product.brand?.name || 'SEQUENZ';
   const labels = [item.is_new_label && 'NEW', item.is_sale_label && 'SALE'].filter(Boolean).join(' · ');
   const primaryImage = item.product.images?.find(image => image.is_primary) || item.product.images?.[0];
-  return `<article class="product-card" data-product-id="${Number(item.id)}"><button class="wish-button" data-wish="${Number(item.id)}" aria-label="찜하기">${state.wishlist.has(Number(item.id)) ? '♥' : '♡'}</button><div class="product-image">${primaryImage ? `<img src="${h(safeUrl(primaryImage.image_url))}" alt="${h(primaryImage.alt_text || item.display_name)}" loading="lazy">` : h(brand)}</div><p class="brand-name">${h(brand)}</p><h3>${h(item.display_name)}</h3><p class="price">${item.consumer_price_snapshot > item.selling_price_snapshot ? `<del>${won(item.consumer_price_snapshot)}</del>` : ''}${won(item.selling_price_snapshot)}</p><p class="labels">${h(labels)}</p></article>`;
+  return `<article class="product-card" data-product-id="${Number(item.id)}"><button class="wish-button" data-wish="${Number(item.id)}" aria-label="찜하기">${state.wishlist.has(Number(item.id)) ? '♥' : '♡'}</button><a class="product-card-link" href="/products/${Number(item.id)}/"><div class="product-image">${primaryImage ? `<img src="${h(safeUrl(primaryImage.image_url))}" alt="${h(primaryImage.alt_text || item.display_name)}" loading="lazy">` : h(brand)}</div><p class="brand-name">${h(brand)}</p><h3>${h(item.display_name)}</h3><p class="price">${item.consumer_price_snapshot > item.selling_price_snapshot ? `<del>${won(item.consumer_price_snapshot)}</del>` : ''}${won(item.selling_price_snapshot)}</p><p class="labels">${h(labels)}</p></a></article>`;
 }
 
 async function openProduct(id) {
-  const [item, reviews] = await Promise.all([api(`/api/catalog/listings/${id}/`), api(`/api/community/reviews/listing/${id}/`)]);
-  api('/api/accounts/recently-viewed/', { method:'POST', body:JSON.stringify({ listing_id:Number(id) }) }).catch(() => {});
-  const available = item.variants.filter(v => v.status === 'active' && v.stock_quantity > 0);
-  const images = item.product.images || [], detailImage = images.find(image => image.is_primary) || images[0];
-  const detailVisual = detailImage ? `<button class="detail-image-button" aria-label="이미지 확대"><img id="detailMainImage" src="${h(safeUrl(detailImage.image_url))}" alt="${h(detailImage.alt_text || item.display_name)}"></button>${images.length > 1 ? `<div class="image-thumbnails">${images.map(image => `<button data-gallery-image="${h(safeUrl(image.image_url))}"><img src="${h(safeUrl(image.image_url))}" alt=""></button>`).join('')}</div>` : ''}` : h(item.product.brand?.name || 'SEQUENZ');
-  const attributes = item.product.attributes?.length ? `<dl class="product-attributes">${item.product.attributes.map(attribute => `<div><dt>${h(attribute.name)}</dt><dd>${h(attribute.value)}</dd></div>`).join('')}</dl>` : '';
-  const notice = item.product.information_notice ? `<details class="product-notice"><summary>상품정보제공고시</summary>${Object.entries(item.product.information_notice.fields || {}).map(([name,value]) => `<p><strong>${h(name)}</strong> ${h(value)}</p>`).join('')}</details>` : '';
-  document.querySelector('#productDetail').innerHTML = `<div class="detail-visual">${detailVisual}</div><p class="brand-name">${h(item.product.brand?.name || '')}</p><h2>${h(item.display_name)}</h2><p>${h(item.listing_summary || '')}</p>${attributes}<p class="detail-price">${won(item.selling_price_snapshot)}</p><select id="variantSelect" class="variant-select"><option value="">옵션을 선택하세요</option>${available.map(v => `<option value="${Number(v.id)}">${h(v.option_display_name)} · 재고 ${Number(v.stock_quantity)}</option>`).join('')}</select><button id="addCartButton" class="primary-button">장바구니 담기</button>${notice}<div class="review-summary">후기 ${Number(reviews.summary.count)} · 평점 ${Number(reviews.summary.average_rating)}</div>${reviews.results.map(review => `<article class="review-card"><strong>${'★'.repeat(review.rating)}${'☆'.repeat(5-review.rating)}</strong><p>${h(review.title || '')}</p><p>${h(review.body)}</p><small>${h(review.reviewer_name)}</small></article>`).join('') || '<p>아직 작성된 후기가 없습니다.</p>'}`;
-  const description = document.createElement('div'); description.className = 'product-description'; description.textContent = htmlToText(item.listing_detail_html || item.product.detail_html); document.querySelector('#productDetail .detail-price').before(description);
-  document.querySelector('#productDialog').showModal();
-  document.querySelector('.detail-image-button')?.addEventListener('click', event => event.currentTarget.classList.toggle('zoomed'));
-  document.querySelectorAll('[data-gallery-image]').forEach(button => { button.onclick = () => { document.querySelector('#detailMainImage').src = button.dataset.galleryImage; }; });
-  document.querySelector('#addCartButton').onclick = async () => { const id = document.querySelector('#variantSelect').value; if (!id) return toast('옵션을 선택해 주세요.'); await api('/api/commerce/cart/items/', { method:'POST', body:JSON.stringify({ listing_variant_id:Number(id), quantity:1 }) }); await refreshCartCount(); toast('장바구니에 담았습니다.'); };
+  location.href = `/products/${Number(id)}/`;
 }
 
 async function openCart() {
@@ -261,5 +251,10 @@ document.querySelector('#accountButton').onclick = openAccount; document.querySe
 document.querySelector('#supportButton').onclick = openSupport;
 document.querySelector('#loadMoreButton').onclick = () => loadProducts(true);
 document.querySelector('#sortSelect').onchange = event => { state.ordering = event.target.value; loadProducts(); };
+document.querySelector('#searchInput').value = state.query;
 let timer; document.querySelector('#searchInput').oninput = event => { clearTimeout(timer); timer = setTimeout(() => { state.query = event.target.value.trim(); loadProducts(); }, 250); };
-loadWishlist().finally(() => Promise.all([loadBrands(), loadProducts(), loadContent(), loadDiscovery(), refreshCartCount(), handlePaymentRedirect()]).catch(error => toast(error.message)));
+loadWishlist().finally(() => Promise.all([loadBrands(), loadProducts(), loadContent(), loadDiscovery(), refreshCartCount(), handlePaymentRedirect()]).then(() => {
+  if (initialParams.get('openCart') === '1') openCart();
+  if (initialParams.get('openAccount') === '1') openAccount();
+  if (initialParams.get('openSupport') === '1') openSupport();
+}).catch(error => toast(error.message)));
