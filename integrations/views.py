@@ -2,8 +2,8 @@ from datetime import timedelta
 
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db import transaction
-from django.db.models import Count, Sum
-from django.db.models.functions import TruncDate
+from django.db.models import Count, F, IntegerField, OuterRef, Subquery, Sum
+from django.db.models.functions import Coalesce, TruncDate
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.generic import TemplateView
@@ -12,7 +12,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from commerce.models import Order, Payment
+from commerce.inventory import release_order_inventory
 from benefits.models import ShippingPolicy
+from benefits.services import restore_order_benefits
 
 from .models import ExternalApiLog, IntegrationJob, OperationsAuditLog, SabangnetOrderExport
 from .toss import TossPaymentError, fetch_toss_payment
@@ -40,13 +42,13 @@ class OperationsDashboardView(APIView):
 
     def get(self, request):
         since = timezone.now() - timedelta(days=30)
-        paid = Order.objects.filter(paid_at__gte=since, status=Order.Status.PAID)
+        paid = _orders_with_net_payment().filter(paid_at__gte=since, status=Order.Status.PAID)
         by_status = dict(Order.objects.values_list("fulfillment_status").annotate(count=Count("id")))
         recent_orders = Order.objects.order_by("-ordered_at")[:20]
         can_view_pii = request.user.is_superuser or request.user.has_perm("integrations.view_sensitive_pii")
         return Response({
             "summary": {
-                "paid_sales_30d": paid.aggregate(total=Sum("payment_amount"))["total"] or 0,
+                "paid_sales_30d": paid.aggregate(total=Sum("net_payment_amount"))["total"] or 0,
                 "paid_orders_30d": paid.count(),
                 "failed_exports": SabangnetOrderExport.objects.filter(status=SabangnetOrderExport.Status.FAILED).count(),
                 "integration_errors_24h": ExternalApiLog.objects.filter(created_at__gte=timezone.now() - timedelta(days=1)).exclude(error_code="").count(),
@@ -72,10 +74,10 @@ class SalesReportView(APIView):
 
     def get(self, request):
         days = min(max(int(request.query_params.get("days", 30)), 1), 366)
-        rows = Order.objects.filter(
+        rows = _orders_with_net_payment().filter(
             paid_at__gte=timezone.now() - timedelta(days=days), status=Order.Status.PAID
         ).annotate(day=TruncDate("paid_at")).values("day").annotate(
-            order_count=Count("id"), sales=Sum("payment_amount")
+            order_count=Count("id"), sales=Sum("net_payment_amount")
         ).order_by("day")
         return Response({"results": list(rows)})
 
@@ -100,7 +102,11 @@ class PaymentReconcileView(APIView):
     required_permission = "integrations.reconcile_payment"
 
     def post(self, request, order_number):
-        payment = get_object_or_404(Payment.objects.select_related("order"), order__order_number=order_number)
+        payment = Payment.objects.select_related("order").filter(
+            order__order_number=order_number
+        ).order_by("-created_at").first()
+        if payment is None:
+            return Response({"detail": "결제 내역을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
         job = IntegrationJob.objects.create(
             provider="toss_payments", job_type="payment_lookup", status=IntegrationJob.Status.RUNNING,
             requested_by=request.user, started_at=timezone.now(), total_count=1,
@@ -119,10 +125,23 @@ class PaymentReconcileView(APIView):
                 error_message=str(exc), request_summary={"order_number": order_number},
             )
             return Response({"detail": str(exc), "code": exc.code}, status=status.HTTP_502_BAD_GATEWAY)
+        if (
+            (payload.get("paymentKey") and payload["paymentKey"] != payment.payment_key)
+            or (payload.get("orderId") and payload["orderId"] != payment.order.order_number)
+            or (payload.get("totalAmount") is not None and payload["totalAmount"] != payment.total_amount)
+        ):
+            job.status = IntegrationJob.Status.FAILED
+            job.failure_count = 1
+            job.error_summary = "토스 결제 조회 응답이 내부 결제와 일치하지 않습니다."
+            job.finished_at = timezone.now()
+            job.save(update_fields=["status", "failure_count", "error_summary", "finished_at"])
+            return Response({"detail": job.error_summary}, status=status.HTTP_502_BAD_GATEWAY)
         with transaction.atomic():
+            payment = Payment.objects.select_for_update().select_related("order").get(pk=payment.pk)
             payment.status = payload.get("status", payment.status)
             payment.balance_amount = payload.get("balanceAmount", payment.balance_amount)
             payment.save(update_fields=["status", "balance_amount", "updated_at"])
+            _reconcile_order_from_payment(payment)
             job.status = IntegrationJob.Status.SUCCEEDED
             job.success_count = 1
             job.finished_at = timezone.now()
@@ -211,3 +230,37 @@ def _shipping_policy_data(policy):
         "id": policy.pk, "name": policy.name, "base_fee": policy.base_fee,
         "free_shipping_threshold": policy.free_shipping_threshold, "is_active": policy.is_active,
     }
+
+
+def _orders_with_net_payment():
+    latest_balance = Payment.objects.filter(order_id=OuterRef("pk")).order_by("-created_at").values("balance_amount")[:1]
+    return Order.objects.annotate(
+        net_payment_amount=Coalesce(
+            Subquery(latest_balance, output_field=IntegerField()), F("payment_amount"), output_field=IntegerField()
+        )
+    )
+
+
+def _reconcile_order_from_payment(payment):
+    order = payment.order
+    if payment.status == "DONE":
+        changed = []
+        if order.status != Order.Status.PAID:
+            order.status = Order.Status.PAID
+            changed.append("status")
+        if order.paid_at is None:
+            order.paid_at = timezone.now()
+            changed.append("paid_at")
+        if changed:
+            order.save(update_fields=[*changed, "updated_at"])
+        SabangnetOrderExport.objects.get_or_create(order=order)
+    elif payment.balance_amount == 0 and payment.status in {"CANCELED", "PARTIAL_CANCELED"}:
+        order.status = Order.Status.CANCELLED
+        order.fulfillment_status = Order.FulfillmentStatus.CANCELLED
+        order.save(update_fields=["status", "fulfillment_status", "updated_at"])
+        restore_order_benefits(order)
+        release_order_inventory(order)
+    elif payment.status in {"ABORTED", "EXPIRED"} and order.status == Order.Status.PAYMENT_PENDING:
+        order.status = Order.Status.PAYMENT_FAILED
+        order.save(update_fields=["status", "updated_at"])
+        release_order_inventory(order)

@@ -1,12 +1,20 @@
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = "development-only-secret-key"
-DEBUG = True
-ALLOWED_HOSTS = ["*"]
+ENVIRONMENT = os.environ.get("DJANGO_ENV", "development").lower()
+IS_PRODUCTION = ENVIRONMENT == "production"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "development-only-secret-key")
+if IS_PRODUCTION and SECRET_KEY == "development-only-secret-key":
+    raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set in production.")
+DEBUG = os.environ.get("DJANGO_DEBUG", "false" if IS_PRODUCTION else "true").lower() == "true"
+ALLOWED_HOSTS = [
+    host.strip() for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if host.strip()
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -62,7 +70,12 @@ DATABASES = {
     }
 }
 
-AUTH_PASSWORD_VALIDATORS = []
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
 
 LANGUAGE_CODE = "ko-kr"
 TIME_ZONE = "Asia/Seoul"
@@ -82,6 +95,14 @@ REST_FRAMEWORK = {
 
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = False
+SESSION_COOKIE_SECURE = IS_PRODUCTION
+CSRF_COOKIE_SECURE = IS_PRODUCTION
+SECURE_SSL_REDIRECT = IS_PRODUCTION
+SECURE_HSTS_SECONDS = 31_536_000 if IS_PRODUCTION else 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = IS_PRODUCTION
+SECURE_HSTS_PRELOAD = IS_PRODUCTION
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https") if IS_PRODUCTION else None
+PAYMENT_PENDING_TIMEOUT_MINUTES = int(os.environ.get("PAYMENT_PENDING_TIMEOUT_MINUTES", "30"))
 
 TOSS_CLIENT_KEY = os.environ.get("TOSS_CLIENT_KEY", "")
 TOSS_SECRET_KEY = os.environ.get("TOSS_SECRET_KEY", "")

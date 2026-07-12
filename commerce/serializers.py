@@ -22,7 +22,7 @@ class CartItemCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError("Listing variant is not active.")
         if listing_variant.listing.status != "active":
             raise serializers.ValidationError("Listing is not active.")
-        if listing_variant.variant.stock_quantity <= 0:
+        if listing_variant.variant.available_quantity <= 0:
             raise serializers.ValidationError("Variant is out of stock.")
         self.context["listing_variant"] = listing_variant
         return value
@@ -135,7 +135,10 @@ class OrderClaimItemInputSerializer(serializers.Serializer):
 
 
 class OrderClaimCreateSerializer(serializers.Serializer):
-    claim_type = serializers.ChoiceField(choices=OrderClaim.ClaimType.choices)
+    claim_type = serializers.ChoiceField(choices=[
+        OrderClaim.ClaimType.EXCHANGE,
+        OrderClaim.ClaimType.RETURN,
+    ])
     reason = serializers.CharField(max_length=240)
     detail = serializers.CharField(required=False, allow_blank=True)
     items = OrderClaimItemInputSerializer(many=True, allow_empty=False)

@@ -22,8 +22,8 @@ class CategoryAdmin(admin.ModelAdmin):
 class ProductVariantInline(admin.TabularInline):
     model = ProductVariant
     extra = 0
-    fields = ("option_display_name", "variant_code", "barcode", "stock_quantity", "safety_stock_quantity", "supply_status")
-    readonly_fields = ("variant_code", "barcode")
+    fields = ("option_display_name", "variant_code", "barcode", "stock_quantity", "reserved_quantity", "safety_stock_quantity", "supply_status")
+    readonly_fields = ("variant_code", "barcode", "reserved_quantity")
 
 
 class ProductImageInline(admin.TabularInline):
@@ -72,7 +72,7 @@ class ProductListingAdmin(admin.ModelAdmin):
 
 @admin.register(ProductVariant)
 class ProductVariantAdmin(admin.ModelAdmin):
-    list_display = ("product", "option_display_name", "variant_code", "stock_quantity", "safety_stock_quantity", "supply_status")
+    list_display = ("product", "option_display_name", "variant_code", "stock_quantity", "reserved_quantity", "safety_stock_quantity", "supply_status")
     list_filter = ("supply_status",)
     search_fields = ("product__name", "variant_code", "barcode", "option_display_name")
 

@@ -100,6 +100,7 @@ class PointLedger(models.Model):
     class Reason(models.TextChoices):
         ORDER_USE = "order_use", "Order use"
         ORDER_EARN = "order_earn", "Order earn"
+        ORDER_EARN_REVERSAL = "order_earn_reversal", "Order earn reversal"
         REVIEW_EARN = "review_earn", "Review earn"
         CANCEL_RESTORE = "cancel_restore", "Cancellation restore"
         ADMIN = "admin", "Admin adjustment"

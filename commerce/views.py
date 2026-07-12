@@ -16,14 +16,15 @@ from benefits.services import (
     apply_order_benefits,
     quote_member_benefits,
     restore_order_benefits,
-    restore_partial_order_points,
     shipping_fee_for,
 )
+from catalog.models import ProductVariant
 
 from .models import (
     Cart, CartItem, Order, OrderCancellation, OrderClaim, OrderClaimItem, OrderItem,
     OrderStatusHistory, Payment, PaymentAttempt, hash_guest_key,
 )
+from .inventory import InventoryReservationError, release_order_inventory, reserve_order_inventory
 from .serializers import (
     CartItemCreateSerializer,
     CartItemQuantitySerializer,
@@ -105,7 +106,7 @@ class CartItemDetailView(APIView):
         serializer = CartItemQuantitySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         quantity = serializer.validated_data["quantity"]
-        if item.listing_variant.variant.stock_quantity < quantity:
+        if item.listing_variant.variant.available_quantity < quantity:
             return Response({"detail": "Requested quantity exceeds stock."}, status=status.HTTP_400_BAD_REQUEST)
         item.quantity = quantity
         item.save(update_fields=["quantity", "updated_at"])
@@ -156,6 +157,9 @@ class OrderView(APIView):
         cart = get_active_cart(request)
         if cart is None:
             return Response({"detail": "X-Guest-Key header is required."}, status=status.HTTP_400_BAD_REQUEST)
+        cart = Cart.objects.select_for_update().get(pk=cart.pk)
+        if cart.status != Cart.Status.ACTIVE:
+            return Response({"detail": "Cart is no longer active."}, status=status.HTTP_409_CONFLICT)
         cart_items = list(cart.items.select_related("listing", "listing_variant__variant", "listing__product"))
         if not cart_items:
             return Response({"detail": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
@@ -164,22 +168,28 @@ class OrderView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         now = timezone.now()
+        variant_ids = [item.listing_variant.variant_id for item in cart_items]
+        locked_variants = {
+            variant.pk: variant for variant in ProductVariant.objects.select_for_update().filter(pk__in=variant_ids)
+        }
+        quantities = {}
         for item in cart_items:
             listing = item.listing
             listing_variant = item.listing_variant
-            variant = listing_variant.variant
+            variant = locked_variants[listing_variant.variant_id]
             current_price = listing.selling_price_snapshot + listing_variant.additional_amount_snapshot
             if listing.status != "active" or (listing.starts_at and listing.starts_at > now) or (
                 listing.ends_at and listing.ends_at < now
             ):
                 return Response({"detail": f"{listing.display_name}은 현재 판매 중이 아닙니다."}, status=status.HTTP_409_CONFLICT)
-            if listing_variant.status != "active" or variant.stock_quantity < item.quantity:
+            if listing_variant.status != "active" or variant.available_quantity < item.quantity:
                 return Response({"detail": f"{listing.display_name} 옵션의 재고 또는 판매상태를 확인해 주세요."}, status=status.HTTP_409_CONFLICT)
             if item.unit_price_snapshot != current_price:
                 return Response(
                     {"detail": f"{listing.display_name} 가격이 변경되었습니다.", "current_unit_price": current_price},
                     status=status.HTTP_409_CONFLICT,
                 )
+            quantities[variant.pk] = quantities.get(variant.pk, 0) + item.quantity
         subtotal = sum(item.line_total for item in cart_items)
         try:
             benefit_quote = quote_member_benefits(
@@ -229,6 +239,11 @@ class OrderView(APIView):
                 unit_price=item.unit_price_snapshot,
                 line_total=item.line_total,
             )
+        try:
+            reserve_order_inventory(order, quantities)
+        except InventoryReservationError as exc:
+            transaction.set_rollback(True)
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         PaymentAttempt.objects.create(
             order=order,
             customer_key_hash=cart.guest_key_hash or "",
@@ -318,6 +333,9 @@ class TossPaymentConfirmView(APIView):
             self._ensure_sabangnet_export(order)
             return Response(self._payment_response(existing_payment), status=status.HTTP_200_OK)
 
+        if order.inventory_reservation_status != Order.InventoryReservationStatus.RESERVED:
+            return Response({"detail": "주문 재고 예약이 만료되었습니다."}, status=status.HTTP_409_CONFLICT)
+
         if data["amount"] != order.payment_amount:
             return Response({"detail": "Payment amount does not match order amount."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -399,6 +417,8 @@ class TossPaymentPrepareView(APIView):
             return Response({"detail": "Unknown order."}, status=status.HTTP_404_NOT_FOUND)
         if order.status != Order.Status.PAYMENT_PENDING:
             return Response({"detail": "Order is not awaiting payment."}, status=status.HTTP_409_CONFLICT)
+        if order.inventory_reservation_status != Order.InventoryReservationStatus.RESERVED:
+            return Response({"detail": "주문 재고 예약이 만료되었습니다."}, status=status.HTTP_409_CONFLICT)
         if not settings.TOSS_CLIENT_KEY:
             return Response({"detail": "토스페이먼츠 클라이언트 키가 설정되지 않았습니다."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         attempt = order.payment_attempts.order_by("-created_at").first()
@@ -489,19 +509,6 @@ class OrderClaimView(APIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        refund_amount = 0
-        restored_points = 0
-        if claim_type == OrderClaim.ClaimType.PARTIAL_CANCEL:
-            gross = sum(item.unit_price * quantity for item, quantity in selected)
-            coupon_share = order.coupon_discount_amount * gross // max(order.items_subtotal, 1)
-            restored_points = order.point_used_amount * gross // max(order.items_subtotal, 1)
-            refund_amount = gross - coupon_share - restored_points
-            payment = order.payments.filter(status="DONE").order_by("-created_at").first()
-            if payment is None or refund_amount <= 0 or refund_amount > payment.balance_amount:
-                return Response({"detail": "부분취소 가능한 결제금액을 확인할 수 없습니다."}, status=status.HTTP_409_CONFLICT)
-        else:
-            payment = None
-
         with transaction.atomic():
             claim = OrderClaim.objects.create(
                 order=order,
@@ -509,28 +516,13 @@ class OrderClaimView(APIView):
                 requested_by=request.user if request.user.is_authenticated else None,
                 reason=data["reason"],
                 detail=data.get("detail", ""),
-                refund_amount=refund_amount,
-                restored_point_amount=restored_points,
+                refund_amount=0,
+                restored_point_amount=0,
             )
             OrderClaimItem.objects.bulk_create([
                 OrderClaimItem(claim=claim, order_item=item, quantity=quantity)
                 for item, quantity in selected
             ])
-        if claim_type != OrderClaim.ClaimType.PARTIAL_CANCEL:
-            claim.refresh_from_db()
-            return Response(OrderClaimSerializer(claim).data, status=status.HTTP_201_CREATED)
-
-        try:
-            toss_response = cancel_toss_payment(
-                payment.payment_key, claim.reason, str(claim.idempotency_key), cancel_amount=refund_amount
-            )
-        except TossPaymentError as exc:
-            claim.status = OrderClaim.Status.FAILED
-            claim.failure_code = exc.code
-            claim.failure_message = str(exc)[:240]
-            claim.save(update_fields=["status", "failure_code", "failure_message", "updated_at"])
-            return Response({"detail": str(exc), "code": exc.code}, status=status.HTTP_502_BAD_GATEWAY)
-        _complete_partial_cancellation(claim.pk, payment.pk, toss_response)
         claim.refresh_from_db()
         return Response(OrderClaimSerializer(claim).data, status=status.HTTP_201_CREATED)
 
@@ -551,13 +543,7 @@ def _owned_order(request, order_number, for_update=False):
 def _validate_claim_state(order, claim_type):
     if order.status != Order.Status.PAID:
         return "결제가 완료된 주문만 신청할 수 있습니다."
-    if claim_type == OrderClaim.ClaimType.PARTIAL_CANCEL:
-        if order.fulfillment_status not in {
-            Order.FulfillmentStatus.PENDING, Order.FulfillmentStatus.PREPARING,
-            Order.FulfillmentStatus.READY_TO_SHIP,
-        }:
-            return "배송이 시작된 상품은 부분취소할 수 없습니다."
-    elif order.fulfillment_status not in {
+    if order.fulfillment_status not in {
         Order.FulfillmentStatus.SHIPPED, Order.FulfillmentStatus.IN_TRANSIT,
         Order.FulfillmentStatus.DELIVERED,
     }:
@@ -584,34 +570,7 @@ def _validate_claim_items(order, requested_items, claim_type):
         if entry["quantity"] > item.ordered_quantity - already_claimed:
             raise ValueError("신청 가능 수량을 초과했습니다.")
         selected.append((item, entry["quantity"]))
-    if claim_type == OrderClaim.ClaimType.PARTIAL_CANCEL:
-        remaining = sum(item.ordered_quantity - item.cancelled_quantity for item in order.items.all())
-        if sum(quantity for _, quantity in selected) >= remaining:
-            raise ValueError("전체 수량 취소는 전체 주문취소를 이용해 주세요.")
     return selected
-
-
-@transaction.atomic
-def _complete_partial_cancellation(claim_id, payment_id, toss_response):
-    claim = OrderClaim.objects.select_for_update().prefetch_related("items__order_item").get(pk=claim_id)
-    payment = Payment.objects.select_for_update().get(pk=payment_id)
-    cancels = toss_response.get("cancels") or []
-    latest = cancels[-1] if cancels else {}
-    claim.status = OrderClaim.Status.COMPLETED
-    claim.transaction_key = latest.get("transactionKey", "")
-    claim.completed_at = timezone.now()
-    claim.save(update_fields=["status", "transaction_key", "completed_at", "updated_at"])
-    payment.balance_amount = toss_response.get("balanceAmount", max(payment.balance_amount - claim.refund_amount, 0))
-    payment.raw_response_summary = _safe_toss_summary(toss_response)
-    payment.save(update_fields=["balance_amount", "raw_response_summary", "updated_at"])
-    for claim_item in claim.items.all():
-        order_item = OrderItem.objects.select_for_update().get(pk=claim_item.order_item_id)
-        order_item.cancelled_quantity += claim_item.quantity
-        order_item.save(update_fields=["cancelled_quantity"])
-    actual_restored = restore_partial_order_points(claim.order, claim.restored_point_amount)
-    if actual_restored != claim.restored_point_amount:
-        claim.restored_point_amount = actual_restored
-        claim.save(update_fields=["restored_point_amount", "updated_at"])
 
 
 def _toss_customer_key(order):
@@ -652,6 +611,7 @@ def _complete_cancellation(cancellation_id, toss_response):
         new_status=Order.FulfillmentStatus.CANCELLED, note="Toss payment cancelled",
     )
     restore_order_benefits(order)
+    release_order_inventory(order)
 
 
 def _cancellation_response(cancellation):

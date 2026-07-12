@@ -1,5 +1,3 @@
-from unittest.mock import patch
-
 import pytest
 from django.contrib.auth import get_user_model
 
@@ -33,34 +31,23 @@ def _create_paid_order(api_client, user, listing_variant, quantity=2):
 
 
 @pytest.mark.django_db
-def test_partial_cancel_refunds_selected_quantity(api_client, listing_variant):
+def test_partial_cancel_is_not_supported(api_client, listing_variant):
     user = get_user_model().objects.create_user("claim-member", password="password")
     order, payment = _create_paid_order(api_client, user, listing_variant)
     item = order.items.get()
-    toss_response = {
-        "status": "PARTIAL_CANCELED",
-        "balanceAmount": 79000,
-        "cancels": [{"transactionKey": "partial-tx"}],
-    }
+    response = api_client.post(
+        f"/api/commerce/orders/{order.order_number}/claims/",
+        {
+            "claim_type": "partial_cancel", "reason": "옵션 변경",
+            "items": [{"order_item_id": item.id, "quantity": 1}],
+        },
+        format="json",
+    )
 
-    with patch("commerce.views.cancel_toss_payment", return_value=toss_response) as cancel:
-        response = api_client.post(
-            f"/api/commerce/orders/{order.order_number}/claims/",
-            {
-                "claim_type": "partial_cancel", "reason": "옵션 변경",
-                "items": [{"order_item_id": item.id, "quantity": 1}],
-            },
-            format="json",
-        )
-
-    assert response.status_code == 201
-    assert response.json()["status"] == OrderClaim.Status.COMPLETED
-    assert response.json()["refund_amount"] == 79000
-    cancel.assert_called_once_with(payment.payment_key, "옵션 변경", cancel.call_args.args[2], cancel_amount=79000)
-    item.refresh_from_db()
+    assert response.status_code == 400
+    assert OrderClaim.objects.count() == 0
     payment.refresh_from_db()
-    assert item.cancelled_quantity == 1
-    assert payment.balance_amount == 79000
+    assert payment.balance_amount == order.payment_amount
 
 
 @pytest.mark.django_db

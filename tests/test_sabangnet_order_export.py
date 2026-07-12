@@ -7,6 +7,7 @@ from django.core.management import call_command
 
 from catalog.models import Brand, Category, Product, ProductListing, ProductVariant
 from commerce.models import Order
+from commerce.inventory import consume_order_inventory
 from integrations.models import SabangnetOrderExport
 from integrations.sabangnet import SABANGNET_ORDER_COLUMNS, build_order_rows, build_order_workbook
 from integrations.sabangnet_automation import SEQUENCE_TARGET, classify_registration_message
@@ -141,6 +142,23 @@ def test_export_command_writes_file_and_excludes_order_from_next_export(paid_ord
     call_command("export_sabangnet_orders", str(second))
     export.refresh_from_db()
     assert export.filename == output.name
+
+
+@pytest.mark.django_db
+def test_registered_export_consumes_local_inventory_reservation(paid_order):
+    item = paid_order.items.get()
+    variant = item.listing_variant.variant
+    variant.refresh_from_db()
+    assert variant.stock_quantity == 3
+    assert variant.reserved_quantity == 2
+
+    assert consume_order_inventory(paid_order) is True
+
+    paid_order.refresh_from_db()
+    variant.refresh_from_db()
+    assert paid_order.inventory_reservation_status == Order.InventoryReservationStatus.CONSUMED
+    assert variant.stock_quantity == 1
+    assert variant.reserved_quantity == 0
 
 
 def test_sequence_target_and_result_classification_are_fixed_to_20316():

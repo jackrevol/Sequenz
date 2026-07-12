@@ -110,6 +110,7 @@ class ProductVariant(models.Model):
     option_display_name = models.CharField(max_length=240)
     additional_amount = models.BigIntegerField(default=0)
     stock_quantity = models.IntegerField(default=0)
+    reserved_quantity = models.PositiveIntegerField(default=0)
     safety_stock_quantity = models.IntegerField(default=0)
     supply_status = models.CharField(max_length=40, db_index=True)
     synced_at = models.DateTimeField(null=True, blank=True)
@@ -131,6 +132,10 @@ class ProductVariant(models.Model):
 
     def __str__(self):
         return f"{self.product.name} / {self.option_display_name}"
+
+    @property
+    def available_quantity(self):
+        return max(self.stock_quantity - self.reserved_quantity, 0)
 
 
 class ProductImage(models.Model):

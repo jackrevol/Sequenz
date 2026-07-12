@@ -1,4 +1,6 @@
 from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
@@ -37,6 +39,14 @@ class RegistrationSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError("필수 약관에 동의해야 합니다.")
         return value
+
+    def validate(self, attrs):
+        candidate = User(username=attrs.get("username", ""), email=attrs.get("email", ""))
+        try:
+            validate_password(attrs["password"], user=candidate)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"password": list(exc.messages)}) from exc
+        return attrs
 
     @transaction.atomic
     def create(self, validated_data):

@@ -88,6 +88,12 @@ class Order(models.Model):
         CANCELLED = "cancelled", "Cancelled"
         RETURNED = "returned", "Returned"
 
+    class InventoryReservationStatus(models.TextChoices):
+        NONE = "none", "Not reserved"
+        RESERVED = "reserved", "Reserved locally"
+        CONSUMED = "consumed", "Reflected in source stock"
+        RELEASED = "released", "Released"
+
     order_number = models.CharField(max_length=40, unique=True)
     user = models.ForeignKey(
         "auth.User",
@@ -123,6 +129,10 @@ class Order(models.Model):
     sabangnet_status_synced_at = models.DateTimeField(null=True, blank=True)
     fulfillment_status = models.CharField(
         max_length=30, choices=FulfillmentStatus.choices, default=FulfillmentStatus.PENDING, db_index=True
+    )
+    inventory_reservation_status = models.CharField(
+        max_length=20, choices=InventoryReservationStatus.choices,
+        default=InventoryReservationStatus.NONE, db_index=True,
     )
     paid_at = models.DateTimeField(null=True, blank=True)
     ordered_at = models.DateTimeField(auto_now_add=True)
@@ -268,7 +278,6 @@ class OrderCancellation(models.Model):
 
 class OrderClaim(models.Model):
     class ClaimType(models.TextChoices):
-        PARTIAL_CANCEL = "partial_cancel", "Partial cancellation"
         EXCHANGE = "exchange", "Exchange"
         RETURN = "return", "Return"
 

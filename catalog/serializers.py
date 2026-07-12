@@ -55,7 +55,7 @@ class SearchKeywordSerializer(serializers.ModelSerializer):
 
 class ProductListingVariantSerializer(serializers.ModelSerializer):
     option_display_name = serializers.CharField(source="variant.option_display_name")
-    stock_quantity = serializers.IntegerField(source="variant.stock_quantity")
+    stock_quantity = serializers.IntegerField(source="variant.available_quantity")
     supply_status = serializers.CharField(source="variant.supply_status")
 
     class Meta:

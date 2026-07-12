@@ -18,6 +18,19 @@ python3 -m venv .venv
 .venv/bin/python manage.py check
 ```
 
+## Production settings
+
+Production fails fast when the secret key is missing. Configure at least:
+
+```bash
+export DJANGO_ENV=production
+export DJANGO_SECRET_KEY="a-long-random-production-secret"
+export DJANGO_ALLOWED_HOSTS="shop.example.com"
+export PAYMENT_PENDING_TIMEOUT_MINUTES=30
+```
+
+Run `.venv/bin/python manage.py check --deploy` with the production environment before deployment.
+
 ## Initial APIs
 
 - `GET /api/catalog/listings/`
@@ -45,3 +58,11 @@ Synchronize recent order, delivery, and tracking data:
 ```
 
 Run this command every 5–10 minutes with the deployment platform's scheduler. Unknown external status codes are stored without changing the internal fulfillment status.
+
+Expire unpaid orders and release locally reserved stock every minute:
+
+```bash
+.venv/bin/python manage.py expire_payment_pending_orders
+```
+
+Product availability is calculated as Sabangnet stock minus local reservations. After manually registering an exported workbook in Sabangnet, use the `Sabangnet order exports` admin action to mark it registered and consume the reservation.

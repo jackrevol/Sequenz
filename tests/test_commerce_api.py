@@ -125,3 +125,32 @@ def test_order_creation_snapshots_listing_and_creates_payment_attempt(api_client
         format="json",
     )
     assert wrong_phone.status_code == 404
+
+
+@pytest.mark.django_db
+def test_local_reservation_prevents_orders_exceeding_sabangnet_stock(api_client, listing_variant):
+    payload = {
+        "buyer_name": "Buyer", "buyer_phone": "01012345678",
+        "recipient_name": "Receiver", "recipient_phone": "01012345678",
+        "postal_code": "06000", "address1": "Seoul",
+    }
+    for guest_key in ("reserve-a", "reserve-b"):
+        api_client.post(
+            "/api/commerce/cart/items/",
+            {"listing_variant_id": listing_variant.id, "quantity": 3},
+            format="json", HTTP_X_GUEST_KEY=guest_key,
+        )
+
+    first = api_client.post(
+        "/api/commerce/orders/", payload, format="json", HTTP_X_GUEST_KEY="reserve-a"
+    )
+    second = api_client.post(
+        "/api/commerce/orders/", payload, format="json", HTTP_X_GUEST_KEY="reserve-b"
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+    variant = listing_variant.variant
+    variant.refresh_from_db()
+    assert variant.stock_quantity == 5
+    assert variant.reserved_quantity == 3

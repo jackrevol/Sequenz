@@ -1,4 +1,8 @@
+import uuid
+
+from django.db import transaction
 from django.db.models import Avg, Count
+from PIL import Image, UnidentifiedImageError
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -24,15 +28,28 @@ class ListingReviewListView(APIView):
 class ProductReviewCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request):
         serializer = ProductReviewCreateSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         files = request.FILES.getlist("images")
         if len(files) > 5:
             return Response({"detail": "후기 이미지는 최대 5장까지 등록할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        allowed_formats = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}
         for image in files:
-            if not image.content_type.startswith("image/") or image.size > 10 * 1024 * 1024:
+            if image.size > 10 * 1024 * 1024:
                 return Response({"detail": "10MB 이하 이미지 파일만 등록할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                parsed = Image.open(image)
+                image_format = parsed.format
+                width, height = parsed.size
+                parsed.verify()
+            except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
+                return Response({"detail": "정상적인 이미지 파일만 등록할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
+            if image_format not in allowed_formats or width * height > 25_000_000:
+                return Response({"detail": "JPEG, PNG, WEBP 형식의 2,500만 픽셀 이하 이미지만 등록할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
+            image.seek(0)
+            image.name = f"{uuid.uuid4().hex}.{allowed_formats[image_format]}"
         review = serializer.save()
         for index, image in enumerate(files):
             ProductReviewImage.objects.create(review=review, image=image, sort_order=index)

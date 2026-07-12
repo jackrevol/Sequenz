@@ -91,6 +91,17 @@ def test_registration_rejects_missing_required_terms(api_client):
 
 
 @pytest.mark.django_db
+def test_registration_applies_django_password_validators(api_client):
+    payload = {
+        **REGISTRATION, "username": "weak_password", "email": "weak@example.com",
+        "phone": "01055557777", "password": "12345678",
+    }
+    response = api_client.post("/api/accounts/register/", payload, format="json")
+    assert response.status_code == 400
+    assert "password" in response.json()
+
+
+@pytest.mark.django_db
 def test_member_manages_private_default_shipping_address(api_client, django_user_model):
     user = django_user_model.objects.create_user(username="address-user", password="strong-pass-1234")
     api_client.force_login(user)

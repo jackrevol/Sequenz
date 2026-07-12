@@ -1,4 +1,7 @@
 import pytest
+from datetime import timedelta
+from django.core.management import call_command
+from django.utils import timezone
 
 from catalog.models import Brand, Category, Product, ProductListing, ProductVariant
 from commerce.models import Order, OrderCancellation, Payment, PaymentAttempt
@@ -111,6 +114,11 @@ def test_toss_confirm_marks_order_paid_and_queues_sabangnet_export(api_client, o
     assert Payment.objects.filter(order=order, payment_key="pay_test_1000", status="DONE").exists()
     assert order.paid_at is not None
     assert PaymentAttempt.objects.get(order=order).status == PaymentAttempt.Status.CONFIRMED
+    order.refresh_from_db()
+    assert order.inventory_reservation_status == Order.InventoryReservationStatus.RESERVED
+    variant = order.items.get().listing_variant.variant
+    variant.refresh_from_db()
+    assert variant.reserved_quantity == 1
 
     from integrations.models import SabangnetOrderExport
 
@@ -229,6 +237,10 @@ def test_paid_order_can_be_fully_cancelled_once(api_client, order, monkeypatch):
     assert order.fulfillment_status == Order.FulfillmentStatus.CANCELLED
     assert OrderCancellation.objects.get(order=order).transaction_key == "cancel_tx_1"
     assert Payment.objects.get(order=order).status == "CANCELED"
+    assert order.inventory_reservation_status == Order.InventoryReservationStatus.RELEASED
+    variant = order.items.get().listing_variant.variant
+    variant.refresh_from_db()
+    assert variant.reserved_quantity == 0
 
 
 @pytest.mark.django_db
@@ -247,3 +259,18 @@ def test_shipped_order_cannot_be_immediately_cancelled(api_client, order):
         HTTP_X_GUEST_KEY="payment-guest",
     )
     assert response.status_code == 409
+
+
+@pytest.mark.django_db
+def test_expired_payment_order_releases_reserved_inventory(order, settings):
+    settings.PAYMENT_PENDING_TIMEOUT_MINUTES = 30
+    Order.objects.filter(pk=order.pk).update(created_at=timezone.now() - timedelta(minutes=31))
+
+    call_command("expire_payment_pending_orders")
+
+    order.refresh_from_db()
+    variant = order.items.get().listing_variant.variant
+    variant.refresh_from_db()
+    assert order.status == Order.Status.PAYMENT_FAILED
+    assert order.inventory_reservation_status == Order.InventoryReservationStatus.RELEASED
+    assert variant.reserved_quantity == 0

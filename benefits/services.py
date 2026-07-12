@@ -115,26 +115,6 @@ def restore_order_benefits(order):
 
 
 @transaction.atomic
-def restore_partial_order_points(order, amount):
-    amount = int(amount or 0)
-    already_restored = sum(
-        PointLedger.objects.filter(order=order, reason=PointLedger.Reason.CANCEL_RESTORE)
-        .values_list("amount", flat=True)
-    )
-    amount = min(amount, max(order.point_used_amount - already_restored, 0))
-    if not order.user_id or amount <= 0:
-        return 0
-    account, _ = MemberBenefitAccount.objects.select_for_update().get_or_create(user=order.user)
-    account.point_balance += amount
-    account.save(update_fields=["point_balance", "updated_at"])
-    PointLedger.objects.create(
-        account=account, order=order, amount=amount, balance_after=account.point_balance,
-        reason=PointLedger.Reason.CANCEL_RESTORE, description="부분취소 적립금 복구",
-    )
-    return amount
-
-
-@transaction.atomic
 def complete_delivered_order_benefits(order):
     if not order.user_id:
         return None
@@ -156,6 +136,31 @@ def complete_delivered_order_benefits(order):
         amount=earned,
         balance_after=account.point_balance,
         reason=PointLedger.Reason.ORDER_EARN,
+    )
+    return account
+
+
+@transaction.atomic
+def reverse_delivered_order_benefits(order):
+    if not order.user_id:
+        return None
+    earned_ledger = PointLedger.objects.filter(order=order, reason=PointLedger.Reason.ORDER_EARN).first()
+    if earned_ledger is None or PointLedger.objects.filter(
+        order=order, reason=PointLedger.Reason.ORDER_EARN_REVERSAL
+    ).exists():
+        return MemberBenefitAccount.objects.filter(user=order.user).first()
+    account = MemberBenefitAccount.objects.select_for_update().get(user=order.user)
+    account.lifetime_purchase_amount = max(account.lifetime_purchase_amount - order.payment_amount, 0)
+    account.completed_order_count = max(account.completed_order_count - 1, 0)
+    account.point_balance -= earned_ledger.amount
+    account.tier = _eligible_tier(account.lifetime_purchase_amount, account.completed_order_count)
+    account.save(
+        update_fields=["lifetime_purchase_amount", "completed_order_count", "point_balance", "tier", "updated_at"]
+    )
+    PointLedger.objects.create(
+        account=account, order=order, amount=-earned_ledger.amount,
+        balance_after=account.point_balance, reason=PointLedger.Reason.ORDER_EARN_REVERSAL,
+        description="반품 완료에 따른 배송완료 적립 회수",
     )
     return account
 

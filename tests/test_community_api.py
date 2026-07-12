@@ -1,5 +1,7 @@
 import pytest
+from io import BytesIO
 from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image
 
 from accounts.models import MemberProfile
 from catalog.models import Brand, Category, Product, ProductListing
@@ -69,7 +71,9 @@ def test_reviewable_list_and_review_image_upload(api_client, member_purchase, se
     user, _, item, _ = member_purchase
     api_client.force_login(user)
     reviewable = api_client.get("/api/community/reviews/reviewable/")
-    image = SimpleUploadedFile("fit.jpg", b"image-bytes", content_type="image/jpeg")
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2), "white").save(buffer, format="JPEG")
+    image = SimpleUploadedFile("fit.jpg", buffer.getvalue(), content_type="image/jpeg")
 
     created = api_client.post(
         "/api/community/reviews/",
@@ -80,8 +84,25 @@ def test_reviewable_list_and_review_image_upload(api_client, member_purchase, se
     assert reviewable.status_code == 200
     assert reviewable.json()["results"][0]["order_item_id"] == item.id
     assert created.status_code == 201
-    assert created.json()["image_urls"][0].endswith("fit.jpg")
+    assert created.json()["image_urls"][0].endswith(".jpg")
+    assert "fit.jpg" not in created.json()["image_urls"][0]
     assert api_client.get("/api/community/reviews/reviewable/").json()["results"] == []
+
+
+@pytest.mark.django_db
+def test_review_rejects_spoofed_image_content(api_client, member_purchase):
+    user, _, item, _ = member_purchase
+    api_client.force_login(user)
+    fake = SimpleUploadedFile("attack.html", b"<script>alert(1)</script>", content_type="image/png")
+
+    response = api_client.post(
+        "/api/community/reviews/",
+        {"order_item_id": item.id, "rating": 5, "body": "fake", "images": [fake]},
+        format="multipart",
+    )
+
+    assert response.status_code == 400
+    assert ProductReview.objects.count() == 0
 
 
 @pytest.mark.django_db

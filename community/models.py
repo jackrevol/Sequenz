@@ -21,7 +21,7 @@ class ProductReview(models.Model):
 
 class ProductReviewImage(models.Model):
     review = models.ForeignKey(ProductReview, on_delete=models.CASCADE, related_name="images")
-    image = models.FileField(upload_to="reviews/%Y/%m/")
+    image = models.ImageField(upload_to="reviews/%Y/%m/")
     sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 

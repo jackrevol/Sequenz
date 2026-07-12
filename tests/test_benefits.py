@@ -4,7 +4,7 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from benefits.models import Coupon, MemberBenefitAccount, MemberCoupon, MemberTier, PointLedger, ShippingPolicy
-from benefits.services import complete_delivered_order_benefits, restore_order_benefits
+from benefits.services import complete_delivered_order_benefits, restore_order_benefits, reverse_delivered_order_benefits
 from commerce.models import Order
 
 
@@ -121,3 +121,12 @@ def test_delivered_order_earns_points_and_updates_tier_once():
     assert account.completed_order_count == 1
     assert account.point_balance == 2000
     assert PointLedger.objects.filter(order=order, reason=PointLedger.Reason.ORDER_EARN).count() == 1
+
+    reverse_delivered_order_benefits(order)
+    reverse_delivered_order_benefits(order)
+    account.refresh_from_db()
+    assert account.lifetime_purchase_amount == 0
+    assert account.completed_order_count == 0
+    assert account.point_balance == 0
+    assert account.tier is None
+    assert PointLedger.objects.filter(order=order, reason=PointLedger.Reason.ORDER_EARN_REVERSAL).count() == 1

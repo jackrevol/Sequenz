@@ -127,6 +127,10 @@ def _update_order_status(order_id, raw_status, sabangnet_order_no, mapped_status
         from benefits.services import complete_delivered_order_benefits
 
         complete_delivered_order_benefits(order)
+    elif mapped_status == Order.FulfillmentStatus.RETURNED and previous != Order.FulfillmentStatus.RETURNED:
+        from benefits.services import reverse_delivered_order_benefits
+
+        reverse_delivered_order_benefits(order)
     return changed
 
 

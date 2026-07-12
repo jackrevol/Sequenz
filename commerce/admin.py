@@ -87,5 +87,8 @@ class OrderClaimAdmin(admin.ModelAdmin):
     list_display = ("order", "claim_type", "status", "refund_amount", "reason", "requested_at")
     list_filter = ("claim_type", "status", "requested_at")
     search_fields = ("order__order_number", "reason", "transaction_key")
-    readonly_fields = ("refund_amount", "restored_point_amount", "idempotency_key", "transaction_key", "requested_at", "completed_at")
+    readonly_fields = ("order", "claim_type", "requested_by", "reason", "detail", "refund_amount", "restored_point_amount", "idempotency_key", "transaction_key", "requested_at", "completed_at")
     inlines = (OrderClaimItemInline,)
+
+    def has_add_permission(self, request):
+        return False

@@ -1,5 +1,7 @@
 from django.contrib import admin
 
+from commerce.inventory import consume_order_inventory
+
 from .models import ExternalApiLog, IntegrationJob, OperationsAuditLog, SabangnetOrderExport
 
 
@@ -9,6 +11,18 @@ class SabangnetOrderExportAdmin(admin.ModelAdmin):
     list_filter = ("status", "generated_at")
     search_fields = ("order__order_number", "filename")
     readonly_fields = ("order", "status", "generated_at", "filename", "row_count", "payload_summary", "created_at", "updated_at")
+    actions = ("mark_registered",)
+
+    @admin.action(description="선택한 엑셀 주문을 사방넷 등록완료로 표시")
+    def mark_registered(self, request, queryset):
+        updated = 0
+        eligible = queryset.filter(status=SabangnetOrderExport.Status.GENERATED).select_related("order")
+        for export in eligible:
+            consume_order_inventory(export.order)
+            export.status = SabangnetOrderExport.Status.REGISTERED
+            export.save(update_fields=["status", "updated_at"])
+            updated += 1
+        self.message_user(request, f"{updated}건을 사방넷 등록완료로 처리했습니다.")
 
 
 @admin.register(IntegrationJob)
