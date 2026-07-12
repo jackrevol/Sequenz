@@ -65,4 +65,4 @@ Expire unpaid orders and release locally reserved stock every minute:
 .venv/bin/python manage.py expire_payment_pending_orders
 ```
 
-Product availability is calculated as Sabangnet stock minus local reservations. After manually registering an exported workbook in Sabangnet, use the `Sabangnet order exports` admin action to mark it registered and consume the reservation.
+Product availability is calculated as Sabangnet stock minus local reservations. After manually registering an exported workbook in Sabangnet, use the `Sabangnet order exports` admin action to mark it registered. The action first reloads the order products from Sabangnet and only releases the local reservation after every product sync succeeds.

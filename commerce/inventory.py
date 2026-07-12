@@ -39,8 +39,7 @@ def consume_order_inventory(order):
         variant = ProductVariant.objects.select_for_update().get(pk=item.listing_variant.variant_id)
         quantity = item.ordered_quantity - item.cancelled_quantity
         variant.reserved_quantity = max(variant.reserved_quantity - quantity, 0)
-        variant.stock_quantity = max(variant.stock_quantity - quantity, 0)
-        variant.save(update_fields=["reserved_quantity", "stock_quantity", "updated_at"])
+        variant.save(update_fields=["reserved_quantity", "updated_at"])
     order.inventory_reservation_status = Order.InventoryReservationStatus.CONSUMED
     order.save(update_fields=["inventory_reservation_status", "updated_at"])
     return True

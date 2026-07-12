@@ -11,6 +11,7 @@ from commerce.inventory import consume_order_inventory
 from integrations.models import SabangnetOrderExport
 from integrations.sabangnet import SABANGNET_ORDER_COLUMNS, build_order_rows, build_order_workbook
 from integrations.sabangnet_automation import SEQUENCE_TARGET, classify_registration_message
+from integrations.sabangnet_products import sync_order_products
 
 
 @pytest.fixture(autouse=True)
@@ -145,13 +146,34 @@ def test_export_command_writes_file_and_excludes_order_from_next_export(paid_ord
 
 
 @pytest.mark.django_db
-def test_registered_export_consumes_local_inventory_reservation(paid_order):
+def test_registered_export_refreshes_sabangnet_stock_then_releases_reservation(paid_order):
     item = paid_order.items.get()
     variant = item.listing_variant.variant
     variant.refresh_from_db()
     assert variant.stock_quantity == 3
     assert variant.reserved_quantity == 2
 
+    class FakeClient:
+        def fetch_product(self, product_code=None, custom_product_code=None):
+            assert product_code == "SB-EXPORT-1000"
+            return {
+                "productCode": product_code,
+                "customProductCode": "SEQ-EXPORT-1000",
+                "productName": "Export Jacket",
+                "consumerPrice": 129000,
+                "sellingPrice": 119000,
+                "taxCode": "TAXABLE",
+                "productSupplyStatusCode": "IN_SUPPLY",
+                "optionInfo": {"options": [{
+                    "optionDisplayName": "Black / M",
+                    "variantCode": "SEQ-EXPORT-1000-BLK-M",
+                    "barcode": "880000009999",
+                    "stockQuantity": 1,
+                    "optionSupplyStatusCode": "SALE",
+                }]},
+            }
+
+    sync_order_products(paid_order, client=FakeClient())
     assert consume_order_inventory(paid_order) is True
 
     paid_order.refresh_from_db()

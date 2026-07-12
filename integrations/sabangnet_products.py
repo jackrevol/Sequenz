@@ -109,6 +109,20 @@ def sync_product_safely(product_data):
         raise
 
 
+def sync_order_products(order, client=None):
+    client = client or SabangnetProductClient()
+    product_codes = order.items.exclude(sabangnet_product_code="").values_list(
+        "sabangnet_product_code", flat=True
+    ).distinct()
+    synced = []
+    for product_code in product_codes:
+        product_data = client.fetch_product(product_code=product_code)
+        synced.append(sync_product_safely(product_data))
+    if not synced:
+        raise SabangnetProductError("주문에 동기화할 사방넷 상품코드가 없습니다.")
+    return synced
+
+
 def _sync_brand(name):
     name = str(name or "").strip()
     if not name:

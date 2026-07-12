@@ -1,8 +1,9 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 
 from commerce.inventory import consume_order_inventory
 
 from .models import ExternalApiLog, IntegrationJob, OperationsAuditLog, SabangnetOrderExport
+from .sabangnet_products import sync_order_products
 
 
 @admin.register(SabangnetOrderExport)
@@ -18,11 +19,18 @@ class SabangnetOrderExportAdmin(admin.ModelAdmin):
         updated = 0
         eligible = queryset.filter(status=SabangnetOrderExport.Status.GENERATED).select_related("order")
         for export in eligible:
+            try:
+                sync_order_products(export.order)
+            except Exception as exc:
+                self.message_user(
+                    request, f"{export.order.order_number}: 사방넷 재고 동기화 실패 - {exc}", level=messages.ERROR
+                )
+                continue
             consume_order_inventory(export.order)
             export.status = SabangnetOrderExport.Status.REGISTERED
             export.save(update_fields=["status", "updated_at"])
             updated += 1
-        self.message_user(request, f"{updated}건을 사방넷 등록완료로 처리했습니다.")
+        self.message_user(request, f"사방넷 재고 동기화 후 {updated}건을 등록완료로 처리했습니다.")
 
 
 @admin.register(IntegrationJob)
