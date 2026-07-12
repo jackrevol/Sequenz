@@ -1,12 +1,36 @@
 from rest_framework import serializers
 
-from .models import Product, ProductListing, ProductListingVariant
+from .models import Brand, Category, Product, ProductImage, ProductListing, ProductListingVariant
+
+
+class ProductImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductImage
+        fields = ["id", "image_url", "alt_text", "sort_order", "is_primary"]
+
+
+class BrandSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Brand
+        fields = ["id", "name", "slug", "logo_image", "hero_image", "description"]
+
+
+class CategorySerializer(serializers.ModelSerializer):
+    parent_id = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Category
+        fields = ["id", "parent_id", "name", "slug", "level"]
 
 
 class ProductSummarySerializer(serializers.ModelSerializer):
+    brand = BrandSerializer(read_only=True)
+    category = CategorySerializer(read_only=True)
+    images = ProductImageSerializer(many=True, read_only=True)
+
     class Meta:
         model = Product
-        fields = ["id", "sabangnet_product_code", "custom_product_code", "name"]
+        fields = ["id", "sabangnet_product_code", "custom_product_code", "name", "detail_html", "brand", "category", "images"]
 
 
 class ProductListingVariantSerializer(serializers.ModelSerializer):
@@ -43,6 +67,9 @@ class ProductListingSerializer(serializers.ModelSerializer):
             "is_featured",
             "is_new_label",
             "is_sale_label",
+            "listing_summary",
+            "listing_detail_html",
+            "discount_rate_snapshot",
             "product",
             "variants",
         ]

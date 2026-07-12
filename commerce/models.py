@@ -76,6 +76,17 @@ class Order(models.Model):
         PAYMENT_PENDING = "payment_pending", "Payment pending"
         PAID = "paid", "Paid"
         PAYMENT_FAILED = "payment_failed", "Payment failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    class FulfillmentStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PREPARING = "preparing", "Preparing"
+        READY_TO_SHIP = "ready_to_ship", "Ready to ship"
+        SHIPPED = "shipped", "Shipped"
+        IN_TRANSIT = "in_transit", "In transit"
+        DELIVERED = "delivered", "Delivered"
+        CANCELLED = "cancelled", "Cancelled"
+        RETURNED = "returned", "Returned"
 
     order_number = models.CharField(max_length=40, unique=True)
     user = models.ForeignKey(
@@ -107,6 +118,12 @@ class Order(models.Model):
     point_used_amount = models.PositiveBigIntegerField(default=0)
     payment_amount = models.PositiveBigIntegerField(default=0)
     sabangnet_status = models.CharField(max_length=30, default="not_sent", db_index=True)
+    sabangnet_order_no = models.CharField(max_length=80, blank=True, db_index=True)
+    sabangnet_order_status = models.CharField(max_length=80, blank=True, db_index=True)
+    sabangnet_status_synced_at = models.DateTimeField(null=True, blank=True)
+    fulfillment_status = models.CharField(
+        max_length=30, choices=FulfillmentStatus.choices, default=FulfillmentStatus.PENDING, db_index=True
+    )
     paid_at = models.DateTimeField(null=True, blank=True)
     ordered_at = models.DateTimeField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -182,4 +199,45 @@ class Payment(models.Model):
     balance_amount = models.PositiveBigIntegerField()
     raw_response_summary = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class OrderStatusHistory(models.Model):
+    class Source(models.TextChoices):
+        SYSTEM = "system", "System"
+        SABANGNET = "sabangnet", "Sabangnet"
+        ADMIN = "admin", "Admin"
+
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="status_history")
+    source = models.CharField(max_length=20, choices=Source.choices)
+    previous_status = models.CharField(max_length=30, blank=True)
+    new_status = models.CharField(max_length=30)
+    raw_external_status = models.CharField(max_length=80, blank=True)
+    note = models.CharField(max_length=240, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class OrderCancellation(models.Model):
+    class Status(models.TextChoices):
+        REQUESTED = "requested", "Requested"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    order = models.OneToOneField(Order, on_delete=models.PROTECT, related_name="cancellation")
+    payment = models.ForeignKey(Payment, on_delete=models.PROTECT, related_name="cancellations")
+    requested_by = models.ForeignKey(
+        "auth.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="order_cancellations"
+    )
+    reason = models.CharField(max_length=240)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.REQUESTED, db_index=True)
+    idempotency_key = models.CharField(max_length=80, unique=True)
+    cancel_amount = models.PositiveBigIntegerField()
+    transaction_key = models.CharField(max_length=200, blank=True)
+    failure_code = models.CharField(max_length=80, blank=True)
+    failure_message = models.CharField(max_length=240, blank=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)

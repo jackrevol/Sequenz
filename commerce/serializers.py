@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from catalog.models import ProductListingVariant
 
-from .models import CartItem, Order
+from .models import CartItem, Order, OrderItem
 
 
 class CartItemCreateSerializer(serializers.Serializer):
@@ -26,6 +26,10 @@ class CartItemCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError("Variant is out of stock.")
         self.context["listing_variant"] = listing_variant
         return value
+
+
+class CartItemQuantitySerializer(serializers.Serializer):
+    quantity = serializers.IntegerField(min_value=1)
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -61,15 +65,38 @@ class OrderCreateSerializer(serializers.Serializer):
 
 
 class OrderSerializer(serializers.ModelSerializer):
+    items = serializers.SerializerMethodField()
+
+    def get_items(self, order):
+        return OrderItemSerializer(order.items.all(), many=True).data
+
     class Meta:
         model = Order
         fields = [
             "id",
             "order_number",
             "status",
+            "fulfillment_status",
             "items_subtotal",
             "shipping_fee",
             "payment_amount",
+            "buyer_name",
+            "recipient_name",
+            "postal_code",
+            "address1",
+            "address2",
+            "ordered_at",
+            "items",
+        ]
+
+
+class OrderItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderItem
+        fields = [
+            "id", "listing_name_snapshot", "product_name_snapshot", "option_name_snapshot",
+            "ordered_quantity", "unit_price", "line_total",
+            "review_status",
         ]
 
 
@@ -78,3 +105,7 @@ class TossPaymentConfirmSerializer(serializers.Serializer):
     payment_key = serializers.CharField(max_length=200)
     amount = serializers.IntegerField(min_value=0)
     method = serializers.CharField(max_length=40, required=False, allow_blank=True)
+
+
+class OrderCancellationSerializer(serializers.Serializer):
+    reason = serializers.CharField(max_length=240)

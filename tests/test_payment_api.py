@@ -1,7 +1,22 @@
 import pytest
 
 from catalog.models import Brand, Category, Product, ProductListing, ProductVariant
-from commerce.models import Order, Payment, PaymentAttempt
+from commerce.models import Order, OrderCancellation, Payment, PaymentAttempt
+
+
+@pytest.fixture(autouse=True)
+def fake_toss_confirm(monkeypatch):
+    monkeypatch.setattr(
+        "commerce.views.confirm_toss_payment",
+        lambda payment_key, order_id, amount: {
+            "paymentKey": payment_key,
+            "orderId": order_id,
+            "status": "DONE",
+            "method": "카드",
+            "totalAmount": amount,
+            "balanceAmount": amount,
+        },
+    )
 
 
 @pytest.fixture
@@ -51,6 +66,7 @@ def listing_variant(db):
 
 @pytest.fixture
 def order(api_client, listing_variant):
+    api_client.credentials(HTTP_X_GUEST_KEY="payment-guest")
     api_client.post(
         "/api/commerce/cart/items/",
         {"listing_variant_id": listing_variant.id, "quantity": 1},
@@ -77,7 +93,7 @@ def order(api_client, listing_variant):
 
 
 @pytest.mark.django_db
-def test_toss_confirm_marks_order_paid_and_queues_sabangnet_submission(api_client, order):
+def test_toss_confirm_marks_order_paid_and_queues_sabangnet_export(api_client, order):
     response = api_client.post(
         "/api/commerce/payments/toss/confirm/",
         {
@@ -93,13 +109,13 @@ def test_toss_confirm_marks_order_paid_and_queues_sabangnet_submission(api_clien
     order.refresh_from_db()
     assert order.status == Order.Status.PAID
     assert Payment.objects.filter(order=order, payment_key="pay_test_1000", status="DONE").exists()
+    assert order.paid_at is not None
     assert PaymentAttempt.objects.get(order=order).status == PaymentAttempt.Status.CONFIRMED
 
-    from integrations.models import SabangnetOrderSubmission
+    from integrations.models import SabangnetOrderExport
 
-    submission = SabangnetOrderSubmission.objects.get(order=order)
-    assert submission.status == SabangnetOrderSubmission.Status.PENDING
-    assert submission.operation_idempotency_key == f"sabangnet-order:{order.order_number}"
+    export = SabangnetOrderExport.objects.get(order=order)
+    assert export.status == SabangnetOrderExport.Status.PENDING
 
 
 @pytest.mark.django_db
@@ -117,9 +133,9 @@ def test_toss_confirm_is_idempotent_for_same_payment_key(api_client, order):
     assert second.status_code == 200
     assert Payment.objects.filter(order=order, payment_key="pay_test_repeat").count() == 1
 
-    from integrations.models import SabangnetOrderSubmission
+    from integrations.models import SabangnetOrderExport
 
-    assert SabangnetOrderSubmission.objects.filter(order=order).count() == 1
+    assert SabangnetOrderExport.objects.filter(order=order).count() == 1
 
 
 @pytest.mark.django_db
@@ -139,3 +155,95 @@ def test_toss_confirm_rejects_amount_mismatch(api_client, order):
     order.refresh_from_db()
     assert order.status == Order.Status.PAYMENT_PENDING
     assert Payment.objects.filter(order=order).count() == 0
+
+
+@pytest.mark.django_db
+def test_toss_confirm_rejects_mismatched_provider_response(api_client, order, monkeypatch):
+    monkeypatch.setattr(
+        "commerce.views.confirm_toss_payment",
+        lambda *args: {"paymentKey": "different", "orderId": order.order_number, "status": "DONE", "totalAmount": order.payment_amount},
+    )
+    response = api_client.post(
+        "/api/commerce/payments/toss/confirm/",
+        {"order_number": order.order_number, "payment_key": "pay_expected", "amount": order.payment_amount},
+        format="json",
+    )
+    assert response.status_code == 502
+    order.refresh_from_db()
+    assert order.status == Order.Status.PAYMENT_PENDING
+    assert Payment.objects.filter(order=order).count() == 0
+
+
+@pytest.mark.django_db
+def test_toss_prepare_uses_server_order_amount_and_hides_secret(api_client, order, settings):
+    settings.TOSS_CLIENT_KEY = "test_ck_example"
+    response = api_client.get(
+        f"/api/commerce/payments/toss/prepare/{order.order_number}/",
+        HTTP_X_GUEST_KEY="payment-guest",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["client_key"] == "test_ck_example"
+    assert body["customer_key"] == "ANONYMOUS"
+    assert body["amount"] == order.payment_amount
+    assert "secret_key" not in body
+
+
+@pytest.mark.django_db
+def test_paid_order_can_be_fully_cancelled_once(api_client, order, monkeypatch):
+    confirmed = api_client.post(
+        "/api/commerce/payments/toss/confirm/",
+        {"order_number": order.order_number, "payment_key": "pay_cancel", "amount": order.payment_amount},
+        format="json",
+    )
+    assert confirmed.status_code == 201
+    calls = []
+
+    def fake_cancel(payment_key, reason, idempotency_key):
+        calls.append((payment_key, reason, idempotency_key))
+        return {
+            "status": "CANCELED", "balanceAmount": 0,
+            "cancels": [{"transactionKey": "cancel_tx_1", "cancelAmount": order.payment_amount}],
+        }
+
+    monkeypatch.setattr("commerce.views.cancel_toss_payment", fake_cancel)
+    first = api_client.post(
+        f"/api/commerce/orders/{order.order_number}/cancel/",
+        {"reason": "고객 요청"},
+        format="json",
+        HTTP_X_GUEST_KEY="payment-guest",
+    )
+    second = api_client.post(
+        f"/api/commerce/orders/{order.order_number}/cancel/",
+        {"reason": "중복 요청"},
+        format="json",
+        HTTP_X_GUEST_KEY="payment-guest",
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(calls) == 1
+    order.refresh_from_db()
+    assert order.status == Order.Status.CANCELLED
+    assert order.fulfillment_status == Order.FulfillmentStatus.CANCELLED
+    assert OrderCancellation.objects.get(order=order).transaction_key == "cancel_tx_1"
+    assert Payment.objects.get(order=order).status == "CANCELED"
+
+
+@pytest.mark.django_db
+def test_shipped_order_cannot_be_immediately_cancelled(api_client, order):
+    api_client.post(
+        "/api/commerce/payments/toss/confirm/",
+        {"order_number": order.order_number, "payment_key": "pay_shipped", "amount": order.payment_amount},
+        format="json",
+    )
+    order.fulfillment_status = Order.FulfillmentStatus.SHIPPED
+    order.save(update_fields=["fulfillment_status"])
+    response = api_client.post(
+        f"/api/commerce/orders/{order.order_number}/cancel/",
+        {"reason": "배송 후 요청"},
+        format="json",
+        HTTP_X_GUEST_KEY="payment-guest",
+    )
+    assert response.status_code == 409

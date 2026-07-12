@@ -133,6 +133,52 @@ class ProductVariant(models.Model):
         return f"{self.product.name} / {self.option_display_name}"
 
 
+class ProductImage(models.Model):
+    class Source(models.TextChoices):
+        SABANGNET = "sabangnet", "Sabangnet"
+        ADMIN = "admin", "Admin"
+
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="images")
+    source = models.CharField(max_length=20, choices=Source.choices, default=Source.SABANGNET)
+    sabangnet_image_srno = models.CharField(max_length=80, blank=True)
+    image_url = models.URLField(max_length=1000)
+    alt_text = models.CharField(max_length=240, blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    is_primary = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["product", "source", "sabangnet_image_srno"],
+                condition=~Q(sabangnet_image_srno=""),
+                name="unique_product_source_image_srno",
+            ),
+            models.UniqueConstraint(
+                fields=["product"], condition=Q(is_primary=True), name="unique_primary_image_per_product"
+            ),
+        ]
+
+
+class ProductSyncSnapshot(models.Model):
+    class Status(models.TextChoices):
+        CREATED = "created", "Created"
+        UPDATED = "updated", "Updated"
+        FAILED = "failed", "Failed"
+
+    product = models.ForeignKey(Product, null=True, blank=True, on_delete=models.SET_NULL, related_name="sync_snapshots")
+    sabangnet_product_code = models.CharField(max_length=80, db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices, db_index=True)
+    field_changes = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    synced_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-synced_at"]
+
+
 class ProductListing(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
