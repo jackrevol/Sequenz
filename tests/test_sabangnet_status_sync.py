@@ -1,6 +1,6 @@
 import pytest
 
-from commerce.models import Order, OrderStatusHistory
+from commerce.models import Order, OrderStatusHistory, Shipment
 from integrations.sabangnet_status import SabangnetStatusError, configured_status_map, sync_order_status_rows
 
 
@@ -17,7 +17,14 @@ def paid_order(db):
 @pytest.mark.django_db
 def test_sync_preserves_raw_status_and_maps_approved_delivery_status(paid_order):
     result = sync_order_status_rows(
-        [{"SHOP_ORD_NO": paid_order.order_number, "SB_ORD_NO": "SB-100", "ORDER_STATUS": "DELIVERY_DONE"}],
+        [{
+            "SHOP_ORD_NO": paid_order.order_number,
+            "SB_ORD_NO": "SB-100",
+            "ORDER_STATUS": "DELIVERY_DONE",
+            "WAYBILL_NO": "1234567890",
+            "DELIVERY_COMPANY_CODE": "CJGLS",
+            "DELIVERY_COMPANY_NAME": "CJ대한통운",
+        }],
         status_map={"DELIVERY_DONE": Order.FulfillmentStatus.DELIVERED},
     )
 
@@ -31,6 +38,29 @@ def test_sync_preserves_raw_status_and_maps_approved_delivery_status(paid_order)
     history = OrderStatusHistory.objects.get(order=paid_order)
     assert history.previous_status == Order.FulfillmentStatus.PENDING
     assert history.new_status == Order.FulfillmentStatus.DELIVERED
+    shipment = Shipment.objects.get(order=paid_order)
+    assert shipment.carrier_code == "CJGLS"
+    assert shipment.carrier_name == "CJ대한통운"
+    assert shipment.tracking_number == "1234567890"
+    assert shipment.status == Order.FulfillmentStatus.DELIVERED
+    assert shipment.shipped_at is not None
+    assert shipment.delivered_at is not None
+
+
+@pytest.mark.django_db
+def test_repeated_status_sync_does_not_duplicate_shipment(paid_order):
+    row = {
+        "SHOP_ORD_NO": paid_order.order_number,
+        "SB_ORD_NO": "SB-100",
+        "ORDER_STATUS": "SHIPPED",
+        "shippingCode": "TRACK-1",
+        "deliveryAgencyId": 4,
+    }
+    sync_order_status_rows([row], status_map={"SHIPPED": Order.FulfillmentStatus.SHIPPED})
+    first_synced = Shipment.objects.get(order=paid_order).shipped_at
+    sync_order_status_rows([row], status_map={"SHIPPED": Order.FulfillmentStatus.SHIPPED})
+    assert Shipment.objects.filter(order=paid_order).count() == 1
+    assert Shipment.objects.get(order=paid_order).shipped_at == first_synced
 
 
 @pytest.mark.django_db

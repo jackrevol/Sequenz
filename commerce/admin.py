@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Cart, CartItem, Order, OrderCancellation, OrderItem, OrderStatusHistory, Payment, PaymentAttempt
+from .models import Cart, CartItem, Order, OrderCancellation, OrderItem, OrderStatusHistory, Payment, PaymentAttempt, Shipment
 
 
 class OrderItemInline(admin.TabularInline):
@@ -20,13 +20,23 @@ class OrderStatusHistoryInline(admin.TabularInline):
     readonly_fields = ("source", "previous_status", "new_status", "raw_external_status", "note", "created_at")
 
 
+class ShipmentInline(admin.TabularInline):
+    model = Shipment
+    extra = 0
+    can_delete = False
+    readonly_fields = (
+        "sabangnet_order_no", "carrier_code", "carrier_name", "tracking_number", "status",
+        "shipped_at", "delivered_at", "synced_at", "raw_summary", "created_at",
+    )
+
+
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     list_display = ("order_number", "status", "fulfillment_status", "buyer_name", "recipient_name", "payment_amount", "sabangnet_order_status", "ordered_at")
     list_filter = ("status", "fulfillment_status", "sabangnet_status", "ordered_at")
     search_fields = ("order_number", "buyer_name", "buyer_phone", "recipient_name", "recipient_phone")
     readonly_fields = ("order_number", "items_subtotal", "payment_amount", "paid_at", "ordered_at", "created_at", "updated_at")
-    inlines = (OrderItemInline, OrderStatusHistoryInline)
+    inlines = (OrderItemInline, ShipmentInline, OrderStatusHistoryInline)
     date_hierarchy = "ordered_at"
 
 
@@ -64,4 +74,3 @@ class OrderCancellationAdmin(admin.ModelAdmin):
     list_filter = ("status", "requested_at")
     search_fields = ("order__order_number", "payment__payment_key", "reason", "transaction_key")
     readonly_fields = tuple(field.name for field in OrderCancellation._meta.fields)
-

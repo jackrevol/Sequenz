@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from catalog.models import ProductListingVariant
 
-from .models import CartItem, Order, OrderItem
+from .models import CartItem, Order, OrderItem, Shipment
 
 
 class CartItemCreateSerializer(serializers.Serializer):
@@ -66,9 +66,13 @@ class OrderCreateSerializer(serializers.Serializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = serializers.SerializerMethodField()
+    shipments = serializers.SerializerMethodField()
 
     def get_items(self, order):
         return OrderItemSerializer(order.items.all(), many=True).data
+
+    def get_shipments(self, order):
+        return ShipmentSerializer(order.shipments.all(), many=True).data
 
     class Meta:
         model = Order
@@ -87,6 +91,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "address2",
             "ordered_at",
             "items",
+            "shipments",
         ]
 
 
@@ -97,6 +102,15 @@ class OrderItemSerializer(serializers.ModelSerializer):
             "id", "listing_name_snapshot", "product_name_snapshot", "option_name_snapshot",
             "ordered_quantity", "unit_price", "line_total",
             "review_status",
+        ]
+
+
+class ShipmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Shipment
+        fields = [
+            "id", "carrier_code", "carrier_name", "tracking_number", "status",
+            "shipped_at", "delivered_at", "synced_at",
         ]
 
 

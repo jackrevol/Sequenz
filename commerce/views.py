@@ -206,7 +206,7 @@ class OrderDetailView(APIView):
                 return Response({"detail": "X-Guest-Key header is required."}, status=status.HTTP_400_BAD_REQUEST)
             filters["guest_order_key_hash"] = guest_hash
         try:
-            order = Order.objects.prefetch_related("items").get(**filters)
+            order = Order.objects.prefetch_related("items", "shipments").get(**filters)
         except Order.DoesNotExist:
             return Response({"detail": "Unknown order."}, status=status.HTTP_404_NOT_FOUND)
         return Response(OrderSerializer(order).data)
@@ -216,7 +216,7 @@ class MemberOrderListView(APIView):
     def get(self, request):
         if not request.user.is_authenticated:
             return Response({"detail": "Authentication credentials were not provided."}, status=status.HTTP_403_FORBIDDEN)
-        orders = Order.objects.filter(user=request.user).prefetch_related("items").order_by("-ordered_at")
+        orders = Order.objects.filter(user=request.user).prefetch_related("items", "shipments").order_by("-ordered_at")
         return Response({"results": OrderSerializer(orders, many=True).data})
 
 

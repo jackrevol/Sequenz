@@ -220,6 +220,29 @@ class OrderStatusHistory(models.Model):
         ordering = ["-created_at"]
 
 
+class Shipment(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="shipments")
+    sabangnet_order_no = models.CharField(max_length=80, blank=True, db_index=True)
+    carrier_code = models.CharField(max_length=80, blank=True)
+    carrier_name = models.CharField(max_length=120, blank=True)
+    tracking_number = models.CharField(max_length=160, db_index=True)
+    status = models.CharField(max_length=30, blank=True, db_index=True)
+    shipped_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    synced_at = models.DateTimeField(auto_now=True)
+    raw_summary = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["order", "carrier_code", "tracking_number"],
+                name="unique_order_carrier_tracking_number",
+            )
+        ]
+
+
 class OrderCancellation(models.Model):
     class Status(models.TextChoices):
         REQUESTED = "requested", "Requested"
