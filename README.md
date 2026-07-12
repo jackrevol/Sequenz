@@ -31,6 +31,34 @@ export PAYMENT_PENDING_TIMEOUT_MINUTES=30
 
 Run `.venv/bin/python manage.py check --deploy` with the production environment before deployment.
 
+## Docker image
+
+Build the application image:
+
+```bash
+docker build -t sequenz:latest .
+```
+
+For a local container smoke test, copy the example environment and replace the secret:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+The web application is exposed on `http://localhost:8000`, SQLite and uploaded media are persisted in the `sequenz_data` volume, and the `payment-expirer` service releases stock reserved by expired unpaid orders every minute.
+
+The example disables HTTPS-only options so it can run on localhost. In a real deployment, terminate TLS at a reverse proxy and set:
+
+```bash
+DJANGO_SECURE_SSL_REDIRECT=true
+DJANGO_SESSION_COOKIE_SECURE=true
+DJANGO_CSRF_COOKIE_SECURE=true
+DJANGO_SERVE_MEDIA_FILES=false
+```
+
+When `DJANGO_SERVE_MEDIA_FILES=false`, serve `/media/` from object storage or a reverse proxy backed by the persistent media volume. The container health endpoint is `/healthz/`.
+
 ## Initial APIs
 
 - `GET /api/catalog/listings/`

@@ -6,12 +6,16 @@ from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def env_bool(name, default=False):
+    return os.environ.get(name, "true" if default else "false").lower() in {"1", "true", "yes", "on"}
+
 ENVIRONMENT = os.environ.get("DJANGO_ENV", "development").lower()
 IS_PRODUCTION = ENVIRONMENT == "production"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "development-only-secret-key")
 if IS_PRODUCTION and SECRET_KEY == "development-only-secret-key":
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set in production.")
-DEBUG = os.environ.get("DJANGO_DEBUG", "false" if IS_PRODUCTION else "true").lower() == "true"
+DEBUG = env_bool("DJANGO_DEBUG", not IS_PRODUCTION)
 ALLOWED_HOSTS = [
     host.strip() for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if host.strip()
 ]
@@ -43,6 +47,8 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+if IS_PRODUCTION:
+    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")
 
 ROOT_URLCONF = "sequenz.urls"
 
@@ -66,7 +72,7 @@ WSGI_APPLICATION = "sequenz.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": Path(os.environ.get("DJANGO_DB_PATH", BASE_DIR / "db.sqlite3")),
     }
 }
 
@@ -82,10 +88,22 @@ TIME_ZONE = "Asia/Seoul"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
+STATIC_ROOT = Path(os.environ.get("DJANGO_STATIC_ROOT", BASE_DIR / "staticfiles"))
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = Path(os.environ.get("DJANGO_MEDIA_ROOT", BASE_DIR / "media"))
 STATICFILES_DIRS = [BASE_DIR / "static"]
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": (
+            "whitenoise.storage.CompressedManifestStaticFilesStorage"
+            if IS_PRODUCTION
+            else "django.contrib.staticfiles.storage.StaticFilesStorage"
+        )
+    },
+}
+SERVE_MEDIA_FILES = env_bool("DJANGO_SERVE_MEDIA_FILES", DEBUG)
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
@@ -95,12 +113,12 @@ REST_FRAMEWORK = {
 
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = False
-SESSION_COOKIE_SECURE = IS_PRODUCTION
-CSRF_COOKIE_SECURE = IS_PRODUCTION
-SECURE_SSL_REDIRECT = IS_PRODUCTION
-SECURE_HSTS_SECONDS = 31_536_000 if IS_PRODUCTION else 0
-SECURE_HSTS_INCLUDE_SUBDOMAINS = IS_PRODUCTION
-SECURE_HSTS_PRELOAD = IS_PRODUCTION
+SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", IS_PRODUCTION)
+CSRF_COOKIE_SECURE = env_bool("DJANGO_CSRF_COOKIE_SECURE", IS_PRODUCTION)
+SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", IS_PRODUCTION)
+SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_SECURE_HSTS_SECONDS", "31536000" if IS_PRODUCTION else "0"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", IS_PRODUCTION)
+SECURE_HSTS_PRELOAD = env_bool("DJANGO_SECURE_HSTS_PRELOAD", IS_PRODUCTION)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https") if IS_PRODUCTION else None
 PAYMENT_PENDING_TIMEOUT_MINUTES = int(os.environ.get("PAYMENT_PENDING_TIMEOUT_MINUTES", "30"))
 

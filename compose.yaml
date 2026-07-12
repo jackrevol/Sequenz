@@ -1,0 +1,30 @@
+services:
+  web:
+    build:
+      context: .
+    image: sequenz:latest
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - sequenz_data:/data
+    restart: unless-stopped
+
+  payment-expirer:
+    image: sequenz:latest
+    env_file:
+      - .env
+    command:
+      - sh
+      - -c
+      - while true; do python manage.py expire_payment_pending_orders; sleep 60; done
+    volumes:
+      - sequenz_data:/data
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  sequenz_data:
