@@ -1,5 +1,7 @@
 import pytest
 
+from accounts.models import WishlistItem
+from catalog.models import Product, ProductListing, ProductVariant
 from commerce.models import Cart, Order, PaymentAttempt
 
 
@@ -45,6 +47,94 @@ def test_guest_cart_can_update_delete_and_returns_summary(api_client, listing_va
         HTTP_X_GUEST_KEY="guest-cart-edit",
     )
     assert deleted.status_code == 204
+
+
+@pytest.mark.django_db
+def test_cart_changes_option_and_merges_existing_item(api_client, listing_variant):
+    second_variant = ProductVariant.objects.create(
+        product=listing_variant.variant.product, variant_code="SEQ-P-2000-BLK-M",
+        option_display_name="Black / M", stock_quantity=8, supply_status="SALE",
+    )
+    second_listing_variant = listing_variant.listing.variants.create(variant=second_variant, status="active")
+    first = api_client.post(
+        "/api/commerce/cart/items/", {"listing_variant_id":listing_variant.id, "quantity":1},
+        format="json", HTTP_X_GUEST_KEY="option-cart",
+    ).json()
+    api_client.post(
+        "/api/commerce/cart/items/", {"listing_variant_id":second_listing_variant.id, "quantity":2},
+        format="json", HTTP_X_GUEST_KEY="option-cart",
+    )
+
+    changed = api_client.patch(
+        f"/api/commerce/cart/items/{first['id']}/",
+        {"listing_variant_id":second_listing_variant.id, "quantity":1},
+        format="json", HTTP_X_GUEST_KEY="option-cart",
+    )
+
+    assert changed.status_code == 200
+    assert changed.json()["listing_variant_id"] == second_listing_variant.id
+    assert changed.json()["quantity"] == 3
+    assert Cart.objects.get(status=Cart.Status.ACTIVE).items.count() == 1
+
+
+@pytest.mark.django_db
+def test_member_bulk_moves_selected_cart_items_to_wishlist(api_client, listing_variant, django_user_model):
+    user = django_user_model.objects.create_user(username="bulk-cart", password="strong-pass-1234")
+    api_client.force_login(user)
+    item = api_client.post(
+        "/api/commerce/cart/items/", {"listing_variant_id":listing_variant.id, "quantity":1}, format="json"
+    ).json()
+
+    moved = api_client.post(
+        "/api/commerce/cart/items/bulk/",
+        {"item_ids":[item["id"]], "action":"move_to_wishlist"}, format="json",
+    )
+
+    assert moved.status_code == 200
+    assert moved.json()["processed_count"] == 1
+    assert WishlistItem.objects.filter(user=user, listing=listing_variant.listing).exists()
+    assert Cart.objects.get(user=user, status=Cart.Status.ACTIVE).items.count() == 0
+
+
+@pytest.mark.django_db
+def test_ordering_selected_items_preserves_remaining_cart(api_client, listing_variant):
+    other_product = Product.objects.create(
+        brand=listing_variant.listing.product.brand, category=listing_variant.listing.product.category,
+        sabangnet_product_code="SB-OTHER", custom_product_code="OTHER", name="Other Product",
+        consumer_price=30000, selling_price=30000, tax_code="TAXABLE", supply_status="IN_SUPPLY",
+    )
+    other_variant = ProductVariant.objects.create(
+        product=other_product, variant_code="OTHER-ONE", option_display_name="One",
+        stock_quantity=10, supply_status="SALE",
+    )
+    other_listing = ProductListing.objects.create(
+        product=other_product, listing_code="OTHER-L", status="active", display_name="Other Product",
+        slug="other-product", consumer_price_snapshot=30000, selling_price_snapshot=30000,
+    )
+    other_listing_variant = other_listing.variants.create(variant=other_variant, status="active")
+    first = api_client.post(
+        "/api/commerce/cart/items/", {"listing_variant_id":listing_variant.id, "quantity":1},
+        format="json", HTTP_X_GUEST_KEY="selected-order",
+    ).json()
+    second = api_client.post(
+        "/api/commerce/cart/items/", {"listing_variant_id":other_listing_variant.id, "quantity":1},
+        format="json", HTTP_X_GUEST_KEY="selected-order",
+    ).json()
+
+    response = api_client.post(
+        "/api/commerce/orders/",
+        {
+            "buyer_name":"Buyer", "buyer_phone":"01012345678", "recipient_name":"Receiver",
+            "recipient_phone":"01012345678", "postal_code":"06000", "address1":"Seoul",
+            "cart_item_ids":[first["id"]],
+        },
+        format="json", HTTP_X_GUEST_KEY="selected-order",
+    )
+
+    assert response.status_code == 201
+    assert response.json()["items"][0]["product_name_snapshot"] == "Panel Rashguard"
+    cart = Cart.objects.get(guest_key_hash__isnull=False, status=Cart.Status.ACTIVE)
+    assert list(cart.items.values_list("id", flat=True)) == [second["id"]]
 
 
 @pytest.mark.django_db

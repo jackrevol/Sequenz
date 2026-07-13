@@ -4,24 +4,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
   <meta name="csrf-token" content="{{ csrf_token }}">
+  <link rel="icon" href="{% static 'storefront/favicon.svg' %}" type="image/svg+xml">
   <title>{{ page_title }} | SEQUENZ</title>
   <link rel="stylesheet" href="{% static 'storefront/store.css' %}">
 </head>
 <body class="content-page" data-page="{{ page_kind }}"{% if view.kwargs.order_number %} data-order-number="{{ view.kwargs.order_number }}"{% endif %}{% if view.kwargs.content_type %} data-content-type="{{ view.kwargs.content_type }}" data-content-slug="{{ view.kwargs.slug }}"{% endif %}>
+  <a class="skip-link" href="#mainContent">본문 바로가기</a>
   <header class="topbar">
-    <button class="icon-button menu-trigger" id="menuButton" aria-label="전체 메뉴">MENU</button>
+    <button class="icon-button menu-trigger" id="menuButton" aria-label="전체 메뉴" aria-expanded="false" aria-controls="siteSidebar">MENU</button>
     <a class="logo" href="/">SEQUENZ</a>
     <div class="top-actions"><a class="icon-button" href="/account/">MY</a><a class="icon-button cart-button" href="/cart/">BAG <span id="pageCartCount">0</span></a></div>
   </header>
   {% include "storefront/_sidebar.html" %}
-  <main class="page-main">
+  <main id="mainContent" class="page-main">
     <nav class="page-breadcrumb" aria-label="현재 위치"><a href="/">HOME</a><span>/</span><span>{{ page_title }}</span></nav>
     <header class="page-heading"><p class="eyebrow">SEQUENZ</p><h1>{{ page_title }}</h1></header>
     <div id="pageContent" class="page-content" aria-live="polite"><p class="page-loading">불러오는 중입니다.</p></div>
   </main>
+  {% include "storefront/_footer.html" %}
   <nav class="bottom-nav" aria-label="주요 메뉴">
-    <a href="/">HOME</a><a href="/#products">SHOP</a><a href="/support/">HELP</a><a href="/cart/">BAG</a><a href="/account/">MY</a>
+    <a href="/">홈</a><a href="/account/#wishlist">찜</a><a href="/account/#recent">히스토리</a><a href="/cart/">장바구니</a><a href="/account/">MY</a>
   </nav>
   <div id="toast" class="toast" role="status"></div>
   <script src="https://js.tosspayments.com/v2/standard"></script>

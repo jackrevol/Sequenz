@@ -1,5 +1,5 @@
 from django.utils import timezone
-from django.db.models import F, Q
+from django.db.models import Avg, Count, F, Q
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -36,6 +36,10 @@ class ProductListingListView(generics.ListAPIView):
         brand = self.request.query_params.get("brand", "").strip()
         category = self.request.query_params.get("category", "").strip()
         featured = self.request.query_params.get("featured", "").lower()
+        related_to = self.request.query_params.get("related_to", "").strip()
+        min_price = self.request.query_params.get("min_price", "").strip()
+        max_price = self.request.query_params.get("max_price", "").strip()
+        in_stock = self.request.query_params.get("in_stock", "").lower()
         ordering = self.request.query_params.get("ordering", "newest")
         if query:
             queryset = queryset.filter(
@@ -57,6 +61,30 @@ class ProductListingListView(generics.ListAPIView):
             queryset = queryset.filter(product__category__slug=category)
         if featured in {"1", "true", "yes"}:
             queryset = queryset.filter(is_featured=True)
+        if related_to:
+            try:
+                source = ProductListing.objects.select_related("product").get(
+                    pk=related_to, status=ProductListing.Status.ACTIVE
+                )
+            except (ProductListing.DoesNotExist, TypeError, ValueError):
+                queryset = queryset.none()
+            else:
+                queryset = queryset.exclude(pk=source.pk).filter(
+                    Q(product__brand_id=source.product.brand_id)
+                    | Q(product__category_id=source.product.category_id)
+                )
+        try:
+            if min_price:
+                queryset = queryset.filter(selling_price_snapshot__gte=max(int(min_price), 0))
+            if max_price:
+                queryset = queryset.filter(selling_price_snapshot__lte=max(int(max_price), 0))
+        except ValueError:
+            queryset = queryset.none()
+        if in_stock in {"1", "true", "yes"}:
+            queryset = queryset.filter(
+                variants__status="active",
+                variants__variant__stock_quantity__gt=F("variants__variant__reserved_quantity"),
+            )
         for raw_filter in self.request.query_params.getlist("attribute"):
             name, separator, value = raw_filter.partition(":")
             if separator and name.strip() and value.strip():
@@ -64,11 +92,20 @@ class ProductListingListView(generics.ListAPIView):
                     product__attributes__name=name.strip(), product__attributes__value=value.strip(),
                     product__attributes__is_filterable=True,
                 )
+        queryset = queryset.annotate(
+            popularity_score=Count("orderitem", distinct=True) + Count("wishlist_items", distinct=True),
+            review_count=Count("reviews", filter=Q(reviews__is_visible=True), distinct=True),
+            average_rating=Avg("reviews__rating", filter=Q(reviews__is_visible=True)),
+            view_count=Count("recent_views", distinct=True),
+        )
         orderings = {
             "newest": ("-created_at",),
             "price_asc": ("selling_price_snapshot", "id"),
             "price_desc": ("-selling_price_snapshot", "id"),
             "recommended": ("sort_order", "-created_at"),
+            "popular": ("-popularity_score", "sort_order", "-created_at"),
+            "reviews": ("-review_count", "-average_rating", "-created_at"),
+            "views": ("-view_count", "-created_at"),
         }
         return queryset.order_by(*orderings.get(ordering, orderings["newest"])).distinct()
 

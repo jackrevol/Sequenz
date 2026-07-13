@@ -40,6 +40,11 @@ function showError(error) {
   pageContent.innerHTML = `<div class="page-empty"><h2>화면을 불러오지 못했습니다.</h2><p>${h(error.message)}</p><a class="secondary-button" href="/">홈으로 돌아가기</a></div>`;
 }
 
+function scrollToHashTarget() {
+  if (!location.hash) return;
+  requestAnimationFrame(() => document.querySelector(location.hash)?.scrollIntoView({ block:'start' }));
+}
+
 async function refreshCartCount() {
   const data = await api('/api/commerce/cart/items/');
   document.querySelector('#pageCartCount').textContent = data.summary.item_count;
@@ -51,9 +56,10 @@ async function renderCart() {
   pageContent.innerHTML = data.results.length ? `
     <div class="cart-page-layout">
       <section class="cart-page-list">
-        ${data.results.map(item => `<article class="cart-page-item"><div><p class="brand-name">${h(item.listing_code || 'SEQUENZ')}</p><h2>${h(item.display_name)}</h2><p>${h(item.option_display_name)}</p><strong>${won(item.line_total)}</strong><button class="text-button" data-remove="${Number(item.id)}">삭제</button></div><div class="quantity"><button data-qty="${Number(item.id)}" data-value="${Number(item.quantity) - 1}" aria-label="수량 줄이기">−</button><span>${Number(item.quantity)}</span><button data-qty="${Number(item.id)}" data-value="${Number(item.quantity) + 1}" aria-label="수량 늘리기">＋</button></div></article>`).join('')}
+        <div class="cart-tools"><label><input id="selectAllCart" type="checkbox" checked> 전체 선택</label><span id="cartSelectedCount">${data.results.length}개 선택</span><button class="text-button" data-cart-bulk="delete">선택 삭제</button><button class="text-button" data-cart-bulk="move_to_wishlist">찜으로 이동</button></div>
+        ${data.results.map(item => `<article class="cart-page-item"><label class="cart-select"><input type="checkbox" data-cart-select="${Number(item.id)}" data-line-total="${Number(item.line_total)}" checked><span class="sr-only">${h(item.display_name)} 선택</span></label><div class="cart-item-info"><p class="brand-name">${h(item.listing_code || 'SEQUENZ')}</p><h2>${h(item.display_name)}</h2><label class="sr-only" for="cartOption${Number(item.id)}">${h(item.display_name)} 옵션</label><select id="cartOption${Number(item.id)}" class="cart-option-select" data-cart-option="${Number(item.id)}">${item.available_variants.map(variant => `<option value="${Number(variant.id)}" ${Number(variant.id) === Number(item.listing_variant_id) ? 'selected' : ''}>${h(variant.option_display_name)} · 재고 ${Number(variant.stock_quantity)}</option>`).join('')}</select><strong>${won(item.line_total)}</strong><button class="text-button" data-remove="${Number(item.id)}">삭제</button></div><div class="quantity"><button data-qty="${Number(item.id)}" data-value="${Number(item.quantity) - 1}" aria-label="수량 줄이기">−</button><span>${Number(item.quantity)}</span><button data-qty="${Number(item.id)}" data-value="${Number(item.quantity) + 1}" aria-label="수량 늘리기">＋</button></div></article>`).join('')}
       </section>
-      <aside class="order-summary"><h2>ORDER SUMMARY</h2><dl><div><dt>상품 금액</dt><dd>${won(data.summary.items_subtotal)}</dd></div><div><dt>배송비</dt><dd>${won(data.summary.shipping_fee)}</dd></div><div class="summary-total"><dt>결제 예정 금액</dt><dd>${won(data.summary.payment_amount)}</dd></div></dl><a class="primary-link" href="/checkout/">주문하기</a><a class="continue-link" href="/#products">쇼핑 계속하기</a></aside>
+      <aside class="order-summary"><h2>ORDER SUMMARY</h2><dl><div><dt>상품 금액</dt><dd id="selectedSubtotal">${won(data.summary.items_subtotal)}</dd></div><div><dt>배송비</dt><dd id="selectedShipping">${won(data.summary.shipping_fee)}</dd></div><div class="summary-total"><dt>결제 예정 금액</dt><dd id="selectedPayment">${won(data.summary.payment_amount)}</dd></div></dl><button id="selectedCheckoutButton" class="primary-button">선택 상품 주문하기</button><a class="continue-link" href="/#products">쇼핑 계속하기</a></aside>
     </div>` : '<div class="page-empty"><h2>장바구니가 비어 있습니다.</h2><p>마음에 드는 상품을 담아보세요.</p><a class="primary-link" href="/#products">상품 보러가기</a></div>';
 }
 
@@ -72,19 +78,44 @@ function renderRegister() {
 async function renderAccount() {
   let member;
   try { member = await api('/api/accounts/me/'); } catch (_) { renderLogin(); return; }
-  const [orders, wishlist, recent, inquiries, benefits] = await Promise.all([
+  const [orders, wishlist, recent, inquiries, benefits, addresses] = await Promise.all([
     api('/api/commerce/orders/mine/'), api('/api/accounts/wishlist/'), api('/api/accounts/recently-viewed/'),
-    api('/api/community/inquiries/'), api('/api/benefits/mine/'),
+    api('/api/community/inquiries/'), api('/api/benefits/mine/'), api('/api/accounts/addresses/'),
   ]);
   pageContent.innerHTML = `<div class="account-dashboard">
     <aside class="member-overview"><p class="brand-name">MEMBER</p><h2>${h(member.name || member.username)}님</h2><p>${h(member.email)}</p><dl><div><dt>등급</dt><dd>${h(benefits.account.tier_name)}</dd></div><div><dt>적립금</dt><dd>${Number(benefits.account.point_balance).toLocaleString('ko-KR')}P</dd></div><div><dt>쿠폰</dt><dd>${benefits.coupons.filter(item => item.status === 'available').length}장</dd></div></dl><button id="logoutButton" class="secondary-button">로그아웃</button></aside>
     <div class="account-sections">
       <section class="mypage-section"><h2>주문내역</h2><div class="mini-list">${orders.results.map(order => `<a class="mini-item" href="/orders/${encodeURIComponent(order.order_number)}/"><span>${h(order.order_number)}<br><small>${h(order.status)} · ${h(order.fulfillment_status)}</small></span><strong>${won(order.payment_amount)}</strong></a>`).join('') || '<p>주문내역이 없습니다.</p>'}</div></section>
-      <section class="mypage-section"><h2>찜한 상품</h2><div class="mini-list">${wishlist.results.map(item => `<a class="mini-item" href="/products/${Number(item.id)}/"><span>${h(item.display_name)}</span><strong>${won(item.selling_price_snapshot)}</strong></a>`).join('') || '<p>찜한 상품이 없습니다.</p>'}</div></section>
-      <section class="mypage-section"><h2>최근 본 상품</h2><div class="mini-list">${recent.results.slice(0,5).map(item => `<a class="mini-item" href="/products/${Number(item.id)}/"><span>${h(item.display_name)}</span><strong>${won(item.selling_price_snapshot)}</strong></a>`).join('') || '<p>최근 본 상품이 없습니다.</p>'}</div></section>
+      <section id="addresses" class="mypage-section"><h2>배송지 관리</h2><form id="newAddressForm" class="address-editor"><input name="label" required placeholder="배송지명"><input name="recipient_name" required placeholder="수취인"><input name="recipient_phone" required placeholder="연락처"><input name="postal_code" required placeholder="우편번호"><input name="address1" required placeholder="기본주소"><input name="address2" placeholder="상세주소"><input name="delivery_memo" placeholder="배송 메모"><label class="checkbox-row"><input name="is_default" type="checkbox"> 기본 배송지</label><button class="secondary-button">배송지 추가</button></form><div class="mini-list">${addresses.results.map(address => `<div class="mini-item"><span><strong>${h(address.label)}</strong>${address.is_default ? ' · 기본' : ''}<br><small>${h(address.recipient_name)} · ${h(address.address1)} ${h(address.address2)}</small></span><button class="text-button" data-address-delete="${Number(address.id)}">삭제</button></div>`).join('') || '<p>등록된 배송지가 없습니다.</p>'}</div></section>
+      <section id="wishlist" class="mypage-section"><h2>찜한 상품</h2><div class="mini-list">${wishlist.results.map(item => `<a class="mini-item" href="/products/${Number(item.id)}/"><span>${h(item.display_name)}</span><strong>${won(item.selling_price_snapshot)}</strong></a>`).join('') || '<p>찜한 상품이 없습니다.</p>'}</div></section>
+      <section id="recent" class="mypage-section"><h2>최근 본 상품</h2><div class="mini-list">${recent.results.map(item => `<a class="mini-item" href="/products/${Number(item.id)}/"><span>${h(item.display_name)}</span><strong>${won(item.selling_price_snapshot)}</strong></a>`).join('') || '<p>최근 본 상품이 없습니다.</p>'}</div></section>
       <section class="mypage-section"><h2>1:1 문의</h2><form id="inquiryForm" class="inquiry-form"><select name="category"><option value="order">주문</option><option value="delivery">배송</option><option value="product">상품</option><option value="return">교환·반품</option><option value="other">기타</option></select><input name="subject" required placeholder="문의 제목"><textarea name="body" required placeholder="문의 내용"></textarea><button class="primary-button">문의 등록</button></form><div class="mini-list">${inquiries.results.map(item => `<div class="mini-item"><span>${h(item.subject)}<br><small>${h(item.status)}</small>${item.answer ? `<p class="inquiry-answer">${h(item.answer)}</p>` : ''}</span></div>`).join('')}</div></section>
     </div>
   </div>`;
+  scrollToHashTarget();
+}
+
+async function updateCartSelectionUI() {
+  const selected = [...document.querySelectorAll('[data-cart-select]:checked')];
+  const all = [...document.querySelectorAll('[data-cart-select]')];
+  const allToggle = document.querySelector('#selectAllCart');
+  if (!allToggle) return;
+  allToggle.checked = selected.length === all.length;
+  allToggle.indeterminate = selected.length > 0 && selected.length < all.length;
+  document.querySelector('#cartSelectedCount').textContent = `${selected.length}개 선택`;
+  document.querySelector('#selectedCheckoutButton').disabled = selected.length === 0;
+  if (!selected.length) {
+    document.querySelector('#selectedSubtotal').textContent = won(0);
+    document.querySelector('#selectedShipping').textContent = won(0);
+    document.querySelector('#selectedPayment').textContent = won(0);
+    return;
+  }
+  try {
+    const quote = await api('/api/commerce/cart/benefit-quote/', { method:'POST', body:JSON.stringify({ cart_item_ids:selected.map(input => Number(input.dataset.cartSelect)) }) });
+    document.querySelector('#selectedSubtotal').textContent = won(selected.reduce((sum,input) => sum + Number(input.dataset.lineTotal), 0));
+    document.querySelector('#selectedShipping').textContent = won(quote.shipping_fee);
+    document.querySelector('#selectedPayment').textContent = won(quote.payment_amount);
+  } catch (error) { toast(error.message); }
 }
 
 async function renderSupport() {
@@ -97,15 +128,19 @@ async function renderSupport() {
 
 async function renderCheckout() {
   const cart = await refreshCartCount();
-  if (!cart.results.length) { pageContent.innerHTML = '<div class="page-empty"><h2>주문할 상품이 없습니다.</h2><a class="primary-link" href="/cart/">장바구니로 돌아가기</a></div>'; return; }
+  const storedIds = JSON.parse(localStorage.getItem('sequenzCheckoutItemIds') || '[]').map(Number);
+  const selectedIds = storedIds.filter(id => cart.results.some(item => Number(item.id) === id));
+  const orderItems = selectedIds.length ? cart.results.filter(item => selectedIds.includes(Number(item.id))) : cart.results;
+  if (!orderItems.length) { pageContent.innerHTML = '<div class="page-empty"><h2>주문할 상품이 없습니다.</h2><a class="primary-link" href="/cart/">장바구니로 돌아가기</a></div>'; return; }
   let member = null;
   try { member = await api('/api/accounts/me/'); } catch (_) {}
   const addresses = member ? await api('/api/accounts/addresses/') : { results:[] };
   const benefits = member ? await api('/api/benefits/mine/') : null;
   const address = addresses.results[0] || {};
-  pageContent.innerHTML = `<div class="checkout-page-layout"><form id="checkoutForm" class="checkout-form page-checkout-form"><section><h2>주문자 정보</h2><input name="buyer_name" required placeholder="주문자명" value="${h(member?.name || '')}"><input name="buyer_phone" required placeholder="주문자 연락처" value="${h(member?.phone || '')}"><input name="buyer_email" type="email" placeholder="이메일" value="${h(member?.email || '')}"></section><section><h2>배송지 정보</h2><input name="recipient_name" required placeholder="수취인명" value="${h(address.recipient_name || '')}"><input name="recipient_phone" required placeholder="수취인 연락처" value="${h(address.recipient_phone || '')}"><input name="postal_code" required placeholder="우편번호" value="${h(address.postal_code || '')}"><input name="address1" required placeholder="기본주소" value="${h(address.address1 || '')}"><input name="address2" placeholder="상세주소" value="${h(address.address2 || '')}"><input name="delivery_memo" placeholder="배송 메모" value="${h(address.delivery_memo || '')}"></section>${benefits ? `<section><h2>쿠폰·적립금</h2><div class="benefit-fields"><label>쿠폰<select name="coupon_code"><option value="">사용 안 함</option>${benefits.coupons.filter(item => item.status === 'available').map(item => `<option value="${h(item.coupon.code)}">${h(item.coupon.name)}</option>`).join('')}</select></label><label>적립금 사용 <small>보유 ${Number(benefits.account.point_balance).toLocaleString('ko-KR')}P</small><input type="number" name="point_to_use" min="0" max="${Number(benefits.account.point_balance)}" value="0"></label></div></section>` : ''}<section><h2>결제수단</h2><div class="payment-grid"><label class="payment-option"><input type="radio" name="payment_method" value="CARD" checked><span>신용·체크카드</span></label><label class="payment-option"><input type="radio" name="payment_method" value="NAVERPAY"><span>네이버페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="KAKAOPAY"><span>카카오페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="TOSSPAY"><span>토스페이</span></label></div></section></form><aside class="order-summary"><h2>ORDER SUMMARY</h2>${cart.results.map(item => `<p class="summary-item"><span>${h(item.display_name)} × ${Number(item.quantity)}</span><strong>${won(item.line_total)}</strong></p>`).join('')}<div class="summary-total"><span>결제 예정 금액</span><strong id="checkoutAmount">${won(cart.summary.payment_amount)}</strong></div><button form="checkoutForm" class="primary-button">결제하기</button></aside></div>`;
+  const initialQuote = await api('/api/commerce/cart/benefit-quote/', { method:'POST', body:JSON.stringify({ cart_item_ids:orderItems.map(item => Number(item.id)) }) });
+  pageContent.innerHTML = `<div class="checkout-page-layout"><form id="checkoutForm" class="checkout-form page-checkout-form" data-cart-item-ids="${orderItems.map(item => Number(item.id)).join(',')}"><section><h2>주문자 정보</h2><input name="buyer_name" required placeholder="주문자명" value="${h(member?.name || '')}"><input name="buyer_phone" required placeholder="주문자 연락처" value="${h(member?.phone || '')}"><input name="buyer_email" type="email" placeholder="이메일" value="${h(member?.email || '')}"></section><section><h2>배송지 정보</h2><input name="recipient_name" required placeholder="수취인명" value="${h(address.recipient_name || '')}"><input name="recipient_phone" required placeholder="수취인 연락처" value="${h(address.recipient_phone || '')}"><input name="postal_code" required placeholder="우편번호" value="${h(address.postal_code || '')}"><input name="address1" required placeholder="기본주소" value="${h(address.address1 || '')}"><input name="address2" placeholder="상세주소" value="${h(address.address2 || '')}"><input name="delivery_memo" placeholder="배송 메모" value="${h(address.delivery_memo || '')}"></section>${benefits ? `<section><h2>쿠폰·적립금</h2><div class="benefit-fields"><label>쿠폰<select name="coupon_code"><option value="">사용 안 함</option>${benefits.coupons.filter(item => item.status === 'available').map(item => `<option value="${h(item.coupon.code)}">${h(item.coupon.name)}</option>`).join('')}</select></label><label>적립금 사용 <small>보유 ${Number(benefits.account.point_balance).toLocaleString('ko-KR')}P</small><input type="number" name="point_to_use" min="0" max="${Number(benefits.account.point_balance)}" value="0"></label></div></section>` : ''}<section><h2>결제수단</h2><div class="payment-grid"><label class="payment-option"><input type="radio" name="payment_method" value="CARD" checked><span>신용·체크카드</span></label><label class="payment-option"><input type="radio" name="payment_method" value="NAVERPAY"><span>네이버페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="KAKAOPAY"><span>카카오페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="TOSSPAY"><span>토스페이</span></label></div></section></form><aside class="order-summary"><h2>ORDER SUMMARY</h2>${orderItems.map(item => `<p class="summary-item"><span>${h(item.display_name)} × ${Number(item.quantity)}</span><strong>${won(item.line_total)}</strong></p>`).join('')}<div class="summary-total"><span>결제 예정 금액</span><strong id="checkoutAmount">${won(initialQuote.payment_amount)}</strong></div><button form="checkoutForm" class="primary-button">결제하기</button></aside></div>`;
   const benefitInputs = pageContent.querySelectorAll('[name="coupon_code"], [name="point_to_use"]');
-  benefitInputs.forEach(input => input.addEventListener('change', async () => { const form = document.querySelector('#checkoutForm'); const quote = await api('/api/commerce/cart/benefit-quote/', { method:'POST', body:JSON.stringify({ coupon_code:form.coupon_code?.value || '', point_to_use:Number(form.point_to_use?.value || 0) }) }); document.querySelector('#checkoutAmount').textContent = won(quote.payment_amount); }));
+  benefitInputs.forEach(input => input.addEventListener('change', async () => { const form = document.querySelector('#checkoutForm'); const quote = await api('/api/commerce/cart/benefit-quote/', { method:'POST', body:JSON.stringify({ coupon_code:form.coupon_code?.value || '', point_to_use:Number(form.point_to_use?.value || 0), cart_item_ids:form.dataset.cartItemIds.split(',').map(Number) }) }); document.querySelector('#checkoutAmount').textContent = won(quote.payment_amount); }));
 }
 
 async function requestPayment(orderNumber, method) {
@@ -142,6 +177,25 @@ document.addEventListener('click', async event => {
   if (event.target.dataset.qty) { const value = Number(event.target.dataset.value); if (value > 0) { await api(`/api/commerce/cart/items/${event.target.dataset.qty}/`, { method:'PATCH', body:JSON.stringify({ quantity:value }) }); await renderCart(); } }
   if (event.target.dataset.authTab === 'login') renderLogin();
   if (event.target.dataset.authTab === 'register') renderRegister();
+  if (event.target.id === 'selectAllCart') { document.querySelectorAll('[data-cart-select]').forEach(input => { input.checked = event.target.checked; }); await updateCartSelectionUI(); }
+  if (event.target.dataset.cartBulk) {
+    const itemIds = [...document.querySelectorAll('[data-cart-select]:checked')].map(input => Number(input.dataset.cartSelect));
+    if (!itemIds.length) return toast('상품을 선택해 주세요.');
+    try { await api('/api/commerce/cart/items/bulk/', { method:'POST', body:JSON.stringify({ item_ids:itemIds, action:event.target.dataset.cartBulk }) }); await renderCart(); toast(event.target.dataset.cartBulk === 'delete' ? '선택 상품을 삭제했습니다.' : '찜으로 이동했습니다.'); } catch (error) { toast(error.message); }
+  }
+  if (event.target.id === 'selectedCheckoutButton') {
+    const itemIds = [...document.querySelectorAll('[data-cart-select]:checked')].map(input => Number(input.dataset.cartSelect));
+    if (!itemIds.length) return toast('주문할 상품을 선택해 주세요.');
+    localStorage.setItem('sequenzCheckoutItemIds', JSON.stringify(itemIds)); location.href = '/checkout/';
+  }
+  if (event.target.dataset.addressDelete) { await api(`/api/accounts/addresses/${event.target.dataset.addressDelete}/`, { method:'DELETE' }); await renderAccount(); toast('배송지를 삭제했습니다.'); }
+});
+
+document.addEventListener('change', async event => {
+  if (event.target.dataset.cartSelect) await updateCartSelectionUI();
+  if (event.target.dataset.cartOption) {
+    try { await api(`/api/commerce/cart/items/${event.target.dataset.cartOption}/`, { method:'PATCH', body:JSON.stringify({ listing_variant_id:Number(event.target.value) }) }); await renderCart(); toast('옵션을 변경했습니다.'); } catch (error) { toast(error.message); await renderCart(); }
+  }
 });
 
 document.addEventListener('submit', async event => {
@@ -149,7 +203,8 @@ document.addEventListener('submit', async event => {
   if (event.target.id === 'registerForm') { event.preventDefault(); const form = new FormData(event.target); const data = Object.fromEntries(form); data.terms_agreed = form.has('terms_agreed'); data.marketing_agreed = form.has('marketing_agreed'); try { await api('/api/accounts/register/', { method:'POST', body:JSON.stringify(data) }); await renderAccount(); toast('가입을 완료했습니다.'); } catch (error) { toast(error.message); } }
   if (event.target.id === 'guestOrderLookupForm') { event.preventDefault(); try { const order = await api('/api/commerce/orders/guest-lookup/', { method:'POST', body:JSON.stringify(Object.fromEntries(new FormData(event.target))) }); sessionStorage.setItem(`sequenzGuestOrder:${order.order_number}`, JSON.stringify(order)); location.href = `/orders/${encodeURIComponent(order.order_number)}/`; } catch (error) { toast(error.message); } }
   if (event.target.id === 'inquiryForm') { event.preventDefault(); try { await api('/api/community/inquiries/', { method:'POST', body:JSON.stringify(Object.fromEntries(new FormData(event.target))) }); await renderAccount(); toast('문의를 등록했습니다.'); } catch (error) { toast(error.message); } }
-  if (event.target.id === 'checkoutForm') { event.preventDefault(); const form = new FormData(event.target); const method = form.get('payment_method'); form.delete('payment_method'); const data = Object.fromEntries(form); event.submitter.disabled = true; try { const order = await api('/api/commerce/orders/', { method:'POST', body:JSON.stringify(data) }); await requestPayment(order.order_number, method); } catch (error) { event.submitter.disabled = false; toast(error.message); } }
+  if (event.target.id === 'newAddressForm') { event.preventDefault(); const form = new FormData(event.target); const data = Object.fromEntries(form); data.is_default = form.has('is_default'); try { await api('/api/accounts/addresses/', { method:'POST', body:JSON.stringify(data) }); await renderAccount(); toast('배송지를 추가했습니다.'); } catch (error) { toast(error.message); } }
+  if (event.target.id === 'checkoutForm') { event.preventDefault(); const form = new FormData(event.target); const method = form.get('payment_method'); form.delete('payment_method'); const data = Object.fromEntries(form); data.cart_item_ids = event.target.dataset.cartItemIds.split(',').map(Number); event.submitter.disabled = true; try { const order = await api('/api/commerce/orders/', { method:'POST', body:JSON.stringify(data) }); localStorage.removeItem('sequenzCheckoutItemIds'); await requestPayment(order.order_number, method); } catch (error) { event.submitter.disabled = false; toast(error.message); } }
 });
 
 document.addEventListener('click', async event => {

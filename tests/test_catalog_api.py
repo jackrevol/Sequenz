@@ -101,6 +101,32 @@ def test_catalog_metadata_and_filters(api_client, listing):
 
 
 @pytest.mark.django_db
+def test_catalog_supports_price_stock_and_related_filters(api_client, listing, product):
+    other_product = Product.objects.create(
+        brand=product.brand, category=product.category, sabangnet_product_code="SB-P-RELATED",
+        custom_product_code="SEQ-P-RELATED", name="Related Suit", consumer_price=59000,
+        selling_price=49000, tax_code="TAXABLE", supply_status="IN_SUPPLY",
+    )
+    other_variant = ProductVariant.objects.create(
+        product=other_product, variant_code="RELATED-BLK-S", option_display_name="Black / S",
+        stock_quantity=0, reserved_quantity=0, supply_status="SOLD_OUT",
+    )
+    related = ProductListing.objects.create(
+        product=other_product, listing_code="LIST-RELATED", status="active", display_name="Related Suit",
+        slug="related-suit", consumer_price_snapshot=59000, selling_price_snapshot=49000,
+    )
+    related.variants.create(variant=other_variant, status="active")
+
+    priced = api_client.get("/api/catalog/listings/?min_price=90000&max_price=100000")
+    in_stock = api_client.get("/api/catalog/listings/?in_stock=true")
+    related_response = api_client.get(f"/api/catalog/listings/?related_to={listing.id}")
+
+    assert [item["id"] for item in priced.json()["results"]] == [listing.id]
+    assert [item["id"] for item in in_stock.json()["results"]] == [listing.id]
+    assert [item["id"] for item in related_response.json()["results"]] == [related.id]
+
+
+@pytest.mark.django_db
 def test_wishlist_requires_member_and_recent_views_support_guests(api_client, listing, django_user_model):
     recent = api_client.post(
         "/api/accounts/recently-viewed/",

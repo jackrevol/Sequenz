@@ -24,11 +24,12 @@ function detailToast(message) {
 
 async function loadProductPage() {
   const listingId = Number(document.body.dataset.listingId);
-  const [item, reviews, cart, wishlist] = await Promise.all([
+  const [item, reviews, cart, wishlist, related] = await Promise.all([
     detailApi(`/api/catalog/listings/${listingId}/`),
     detailApi(`/api/community/reviews/listing/${listingId}/`),
     detailApi('/api/commerce/cart/items/'),
     detailApi('/api/accounts/wishlist/').catch(() => ({ results:[] })),
+    detailApi(`/api/catalog/listings/?related_to=${listingId}`),
   ]);
   document.querySelector('#detailCartCount').textContent = cart.summary.item_count;
   detailApi('/api/accounts/recently-viewed/', { method:'POST', body:JSON.stringify({ listing_id:listingId }) }).catch(() => {});
@@ -60,6 +61,7 @@ async function loadProductPage() {
       ${attributes ? `<div class="pdp-section"><h2>상품 속성</h2><dl class="product-attributes">${attributes}</dl></div>` : ''}
       ${Object.keys(notice).length ? `<div class="pdp-section"><h2>상품정보제공고시</h2><dl class="product-attributes">${Object.entries(notice).map(([name,value]) => `<div><dt>${detailEscape(name)}</dt><dd>${detailEscape(value)}</dd></div>`).join('')}</dl></div>` : ''}
       <div class="pdp-section"><div class="pdp-review-head"><h2>리뷰</h2><strong>${Number(reviews.summary.count)} / ${Number(reviews.summary.average_rating).toFixed(1)}</strong></div>${reviewCards}</div>
+      <div class="pdp-section"><h2>관련 상품</h2><div class="related-products">${related.results.slice(0, 6).map(product => { const image = product.product.images?.find(item => item.is_primary) || product.product.images?.[0]; return `<a href="/products/${Number(product.id)}/"><div class="product-image">${image ? `<img src="${detailEscape(detailSafeUrl(image.image_url))}" alt="${detailEscape(product.display_name)}" loading="lazy">` : 'SEQUENZ'}</div><strong>${detailEscape(product.display_name)}</strong><span>${detailWon(product.selling_price_snapshot)}</span></a>`; }).join('') || '<p>관련 상품이 없습니다.</p>'}</div></div>
     </section>
     <div class="mobile-buy-bar"><button id="mobileAddCart" class="secondary-button">BAG</button><button id="mobileBuyNow" class="primary-button">구매하기</button></div>
   `;

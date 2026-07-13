@@ -18,7 +18,8 @@ from benefits.services import (
     restore_order_benefits,
     shipping_fee_for,
 )
-from catalog.models import ProductVariant
+from accounts.models import WishlistItem
+from catalog.models import ProductListingVariant, ProductVariant
 
 from .models import (
     Cart, CartItem, Order, OrderCancellation, OrderClaim, OrderClaimItem, OrderItem,
@@ -27,7 +28,8 @@ from .models import (
 from .inventory import InventoryReservationError, release_order_inventory, reserve_order_inventory
 from .serializers import (
     CartItemCreateSerializer,
-    CartItemQuantitySerializer,
+    CartBulkActionSerializer,
+    CartItemUpdateSerializer,
     CartItemSerializer,
     OrderCreateSerializer,
     OrderCancellationSerializer,
@@ -62,7 +64,11 @@ class CartItemView(APIView):
         cart = get_active_cart(request)
         if cart is None:
             return Response({"detail": "X-Guest-Key header is required."}, status=status.HTTP_400_BAD_REQUEST)
-        serializer = CartItemSerializer(cart.items.select_related("listing", "listing_variant__variant"), many=True)
+        serializer = CartItemSerializer(
+            cart.items.select_related("listing", "listing_variant__variant").prefetch_related(
+                "listing__variants__variant"
+            ), many=True
+        )
         return Response({
             "results": serializer.data,
             "summary": _cart_summary(cart),
@@ -103,13 +109,27 @@ class CartItemDetailView(APIView):
         item, error = self._get_item(request, pk)
         if error:
             return error
-        serializer = CartItemQuantitySerializer(data=request.data)
+        serializer = CartItemUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        quantity = serializer.validated_data["quantity"]
-        if item.listing_variant.variant.available_quantity < quantity:
+        quantity = serializer.validated_data.get("quantity", item.quantity)
+        listing_variant = serializer.validated_data.get("listing_variant", item.listing_variant)
+        if listing_variant.variant.available_quantity < quantity:
             return Response({"detail": "Requested quantity exceeds stock."}, status=status.HTTP_400_BAD_REQUEST)
+        if listing_variant.listing_id != item.listing_id:
+            return Response({"detail": "같은 상품의 옵션만 변경할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        existing = item.cart.items.filter(listing_variant=listing_variant).exclude(pk=item.pk).first()
+        if existing:
+            combined = existing.quantity + quantity
+            if listing_variant.variant.available_quantity < combined:
+                return Response({"detail": "Requested quantity exceeds stock."}, status=status.HTTP_400_BAD_REQUEST)
+            existing.quantity = combined
+            existing.save(update_fields=["quantity", "updated_at"])
+            item.delete()
+            return Response(CartItemSerializer(existing).data)
         item.quantity = quantity
-        item.save(update_fields=["quantity", "updated_at"])
+        item.listing_variant = listing_variant
+        item.unit_price_snapshot = listing_variant.listing.selling_price_snapshot + listing_variant.additional_amount_snapshot
+        item.save(update_fields=["quantity", "listing_variant", "unit_price_snapshot", "updated_at"])
         return Response(CartItemSerializer(item).data)
 
     def delete(self, request, pk):
@@ -120,12 +140,37 @@ class CartItemDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class CartItemBulkView(APIView):
+    @transaction.atomic
+    def post(self, request):
+        cart = get_active_cart(request)
+        if cart is None:
+            return Response({"detail": "X-Guest-Key header is required."}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = CartBulkActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        items = cart.items.filter(pk__in=serializer.validated_data["item_ids"])
+        if items.count() != len(set(serializer.validated_data["item_ids"])):
+            return Response({"detail": "장바구니 상품을 확인해 주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        if serializer.validated_data["action"] == "move_to_wishlist":
+            if not request.user.is_authenticated:
+                return Response({"detail": "로그인 후 찜으로 이동할 수 있습니다."}, status=status.HTTP_403_FORBIDDEN)
+            WishlistItem.objects.bulk_create(
+                [WishlistItem(user=request.user, listing=item.listing) for item in items], ignore_conflicts=True
+            )
+        deleted = items.count()
+        items.delete()
+        return Response({"processed_count": deleted, "summary": _cart_summary(cart)})
+
+
 class CartBenefitQuoteView(APIView):
     def post(self, request):
         cart = get_active_cart(request)
         if cart is None:
             return Response({"detail": "X-Guest-Key header is required."}, status=status.HTTP_400_BAD_REQUEST)
-        subtotal = sum(item.line_total for item in cart.items.all())
+        items = _selected_cart_items(cart, request.data.get("cart_item_ids"))
+        if items is None:
+            return Response({"detail": "장바구니 상품을 확인해 주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        subtotal = sum(item.line_total for item in items)
         if subtotal <= 0:
             return Response({"detail": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
         try:
@@ -160,7 +205,13 @@ class OrderView(APIView):
         cart = Cart.objects.select_for_update().get(pk=cart.pk)
         if cart.status != Cart.Status.ACTIVE:
             return Response({"detail": "Cart is no longer active."}, status=status.HTTP_409_CONFLICT)
-        cart_items = list(cart.items.select_related("listing", "listing_variant__variant", "listing__product"))
+        requested_ids = request.data.get("cart_item_ids")
+        cart_items = _selected_cart_items(
+            cart, requested_ids,
+            queryset=cart.items.select_related("listing", "listing_variant__variant", "listing__product"),
+        )
+        if cart_items is None:
+            return Response({"detail": "장바구니 상품을 확인해 주세요."}, status=status.HTTP_400_BAD_REQUEST)
         if not cart_items:
             return Response({"detail": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -256,8 +307,11 @@ class OrderView(APIView):
         except BenefitValidationError as exc:
             transaction.set_rollback(True)
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
-        cart.status = Cart.Status.ORDERED
-        cart.save(update_fields=["status", "updated_at"])
+        if requested_ids and cart.items.exclude(pk__in=[item.pk for item in cart_items]).exists():
+            cart.items.filter(pk__in=[item.pk for item in cart_items]).delete()
+        else:
+            cart.status = Cart.Status.ORDERED
+            cart.save(update_fields=["status", "updated_at"])
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
 
@@ -311,6 +365,18 @@ def _order_name(cart_items):
     if extra_count <= 0:
         return first
     return f"{first} 외 {extra_count}건"
+
+
+def _selected_cart_items(cart, requested_ids, queryset=None):
+    queryset = queryset if queryset is not None else cart.items.all()
+    if not requested_ids:
+        return list(queryset)
+    try:
+        unique_ids = {int(item_id) for item_id in requested_ids}
+    except (TypeError, ValueError):
+        return None
+    items = list(queryset.filter(pk__in=unique_ids))
+    return items if len(items) == len(unique_ids) else None
 
 
 class TossPaymentConfirmView(APIView):
