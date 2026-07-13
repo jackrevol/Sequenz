@@ -64,6 +64,26 @@ def test_repeated_status_sync_does_not_duplicate_shipment(paid_order):
 
 
 @pytest.mark.django_db
+def test_sandbox_logistics_fields_create_shipment(paid_order):
+    sync_order_status_rows(
+        [{
+            "SHOP_ORD_NO": paid_order.order_number,
+            "SB_ORD_NO": 10001,
+            "ORDER_STATUS": "SHIPPED",
+            "WAYBILL_NO": "TRACK-SANDBOX",
+            "LOGISTICS_CD": "CJGLS",
+            "LOGISTICS_NM": "CJ대한통운",
+        }],
+        status_map={"SHIPPED": Order.FulfillmentStatus.SHIPPED},
+    )
+
+    shipment = Shipment.objects.get(order=paid_order)
+    assert shipment.carrier_code == "CJGLS"
+    assert shipment.carrier_name == "CJ대한통운"
+    assert shipment.sabangnet_order_no == "10001"
+
+
+@pytest.mark.django_db
 def test_unknown_sabangnet_status_is_stored_without_guessing_mapping(paid_order):
     result = sync_order_status_rows(
         [{"SHOP_ORD_NO": paid_order.order_number, "ORDER_STATUS": "UNCONFIRMED_999"}],
