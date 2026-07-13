@@ -1,6 +1,17 @@
 const initialParams = new URLSearchParams(location.search);
 const state = { brand: initialParams.get('brand') || '', category: initialParams.get('category') || '', ordering: 'recommended', query: initialParams.get('q') || '', attributes: {}, next: null, products: [], wishlist:new Set() };
-const guestKey = localStorage.getItem('sequenzGuestKey') || crypto.randomUUID();
+const createGuestKey = () => {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  if (globalThis.crypto?.getRandomValues) {
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return `guest-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+const guestKey = localStorage.getItem('sequenzGuestKey') || createGuestKey();
 localStorage.setItem('sequenzGuestKey', guestKey);
 const headers = { 'Content-Type': 'application/json', 'X-Guest-Key': guestKey };
 headers['X-CSRFToken'] = document.querySelector('meta[name="csrf-token"]').content;
@@ -34,22 +45,25 @@ async function loadContent() {
     document.querySelector('#heroLink').textContent = `${banner.button_label || '자세히 보기'} →`;
     document.querySelector('#heroLink').href = banner.link_url ? safeUrl(banner.link_url) : '#products';
     const media = banner.mobile_media_url || banner.media_url;
-    if (banner.media_type === 'image') hero.style.backgroundImage = `linear-gradient(rgba(0,0,0,.08),rgba(0,0,0,.22)),url("${safeUrl(media)}")`;
-    if (banner.media_type === 'video') hero.innerHTML = `<video class="hero-video" autoplay muted loop playsinline poster="${h(safeUrl(banner.poster_url || ''))}"><source src="${h(safeUrl(media))}"></video><div class="hero-copy"><p class="eyebrow">CURATED EVERYDAY</p><h1>${h(banner.title)}</h1><p>${h(banner.subtitle)}</p><a class="hero-link" href="${h(banner.link_url ? safeUrl(banner.link_url) : '#products')}">${h(banner.button_label || '자세히 보기')} →</a></div>`;
+    if (media && banner.media_type === 'image') {
+      hero.classList.add('has-media');
+      hero.style.backgroundImage = `linear-gradient(rgba(0,0,0,.08),rgba(0,0,0,.32)),url("${safeUrl(media)}")`;
+    }
+    if (media && banner.media_type === 'video') {
+      hero.classList.add('has-media');
+      hero.innerHTML = `<video class="hero-video" autoplay muted loop playsinline ${banner.poster_url ? `poster="${h(safeUrl(banner.poster_url))}"` : ''}><source src="${h(safeUrl(media))}"></video><div class="hero-copy"><p class="eyebrow">CURATED EVERYDAY</p><h1>${h(banner.title)}</h1><p>${h(banner.subtitle)}</p><a class="hero-link" href="${h(banner.link_url ? safeUrl(banner.link_url) : '#products')}">${h(banner.button_label || '자세히 보기')} →</a></div>`;
+    }
   }
   const sections = [
     ...promotions.map(item => ({ ...item, label:'PROMOTION', type:'promotions', image:item.hero_image_url })),
     ...lookbooks.map(item => ({ ...item, label:'LOOKBOOK', type:'lookbooks', image:item.cover_image_url })),
-    ...collections.map(item => ({ ...item, label:'COLLECTION', image:item.hero_image_url })),
+    ...collections.map(item => ({ ...item, label:'COLLECTION', type:'collections', image:item.hero_image_url })),
   ];
   document.querySelector('#collectionSections').innerHTML = sections.map(collection => `<section class="collection-block"><div class="collection-head" ${collection.type ? `data-curated-type="${collection.type}" data-curated-slug="${h(collection.slug)}"` : ''} style="${collection.image ? `background-image:linear-gradient(rgba(0,0,0,.08),rgba(0,0,0,.2)),url('${h(safeUrl(collection.image))}')` : ''}"><p class="eyebrow">${collection.label}</p><h2>${h(collection.title)}</h2><p>${h(collection.summary)}</p></div><div class="collection-products">${collection.listings.slice(0,6).map(productCard).join('')}</div></section>`).join('');
 }
 
 async function openCuratedContent(type, slug) {
-  const item = escapeData(await api(`/api/content/${type}/${encodeURIComponent(slug)}/`));
-  const gallery = (item.images || []).map(image => `<figure><img src="${h(safeUrl(image.image_url))}" alt="${h(image.caption)}"><figcaption>${h(image.caption)}</figcaption></figure>`).join('');
-  document.querySelector('#productDetail').innerHTML = `<p class="brand-name">${type === 'lookbooks' ? 'LOOKBOOK' : 'PROMOTION'} ${h(item.season_label || '')}</p><h2>${h(item.title)}</h2><p>${h(item.summary)}</p><div class="product-description">${h(htmlToText(item.body_html))}</div><div class="curated-gallery">${gallery}</div><div class="collection-products">${item.listings.map(productCard).join('')}</div>`;
-  if (!document.querySelector('#productDialog').open) document.querySelector('#productDialog').showModal();
+  location.href = `/content/${encodeURIComponent(type)}/${encodeURIComponent(slug)}/`;
 }
 
 async function openSupport() {
@@ -246,15 +260,8 @@ document.addEventListener('submit', async event => {
 
 async function refreshCartCount() { const data = await api('/api/commerce/cart/items/'); document.querySelector('#cartCount').textContent = data.summary.item_count; }
 function toast(message) { const el = document.querySelector('#toast'); el.textContent = message; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 1800); }
-document.querySelector('#cartButton').onclick = openCart; document.querySelector('#bottomCartButton').onclick = openCart;
-document.querySelector('#accountButton').onclick = openAccount; document.querySelector('#bottomAccountButton').onclick = openAccount;
-document.querySelector('#supportButton').onclick = openSupport;
 document.querySelector('#loadMoreButton').onclick = () => loadProducts(true);
 document.querySelector('#sortSelect').onchange = event => { state.ordering = event.target.value; loadProducts(); };
 document.querySelector('#searchInput').value = state.query;
 let timer; document.querySelector('#searchInput').oninput = event => { clearTimeout(timer); timer = setTimeout(() => { state.query = event.target.value.trim(); loadProducts(); }, 250); };
-loadWishlist().finally(() => Promise.all([loadBrands(), loadProducts(), loadContent(), loadDiscovery(), refreshCartCount(), handlePaymentRedirect()]).then(() => {
-  if (initialParams.get('openCart') === '1') openCart();
-  if (initialParams.get('openAccount') === '1') openAccount();
-  if (initialParams.get('openSupport') === '1') openSupport();
-}).catch(error => toast(error.message)));
+loadWishlist().finally(() => Promise.all([loadBrands(), loadProducts(), loadContent(), loadDiscovery(), refreshCartCount()]).catch(error => toast(error.message)));

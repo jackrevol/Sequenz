@@ -8,20 +8,22 @@
   <title>SEQUENZ</title>
   <link rel="stylesheet" href="{% static 'storefront/store.css' %}">
 </head>
-<body>
+<body class="storefront-page">
   <header class="topbar">
     <button class="icon-button menu-trigger" id="menuButton" aria-label="전체 메뉴">MENU</button>
     <a class="logo" href="/">SEQUENZ</a>
-    <div class="top-actions"><button class="icon-button" id="accountButton" aria-label="회원 메뉴">MY</button><button class="icon-button cart-button" id="cartButton" aria-label="장바구니">BAG <span id="cartCount">0</span></button></div>
+    <div class="top-actions"><a class="icon-button" href="/account/" aria-label="회원 메뉴">MY</a><a class="icon-button cart-button" href="/cart/" aria-label="장바구니">BAG <span id="cartCount">0</span></a></div>
   </header>
   {% include "storefront/_sidebar.html" %}
 
-  <main>
+  <main class="storefront-main">
     <section class="hero" id="heroBanner">
-      <p class="eyebrow">CURATED EVERYDAY</p>
-      <h1 id="heroTitle">지금의 감각을<br>입는 방식.</h1>
-      <p id="heroSubtitle">선별된 브랜드와 매일 입고 싶은 옷을 만나보세요.</p>
-      <a href="#products" class="hero-link" id="heroLink">SHOP THE EDIT →</a>
+      <div class="hero-copy">
+        <p class="eyebrow">CURATED EVERYDAY</p>
+        <h1 id="heroTitle">지금의 감각을<br>입는 방식.</h1>
+        <p id="heroSubtitle">선별된 브랜드와 매일 입고 싶은 옷을 만나보세요.</p>
+        <a href="#products" class="hero-link" id="heroLink">SHOP THE EDIT →</a>
+      </div>
     </section>
 
     <section class="filters" aria-label="상품 필터">
@@ -47,40 +49,8 @@
     <section id="collectionSections" class="collection-sections"></section>
   </main>
 
-  <dialog id="productDialog" class="sheet">
-    <button class="sheet-close" data-close="productDialog" aria-label="닫기">×</button>
-    <div id="productDetail"></div>
-  </dialog>
-
-  <dialog id="cartDialog" class="sheet cart-sheet">
-    <button class="sheet-close" data-close="cartDialog" aria-label="닫기">×</button>
-    <h2>SHOPPING BAG</h2>
-    <div id="cartItems"></div>
-    <div id="cartSummary" class="cart-summary"></div>
-  </dialog>
-
-  <dialog id="accountDialog" class="sheet account-sheet">
-    <button class="sheet-close" data-close="accountDialog" aria-label="닫기">×</button>
-    <div id="accountContent"></div>
-  </dialog>
-
-  <dialog id="checkoutDialog" class="sheet checkout-sheet">
-    <button class="sheet-close" data-close="checkoutDialog" aria-label="닫기">×</button>
-    <div id="checkoutContent"></div>
-  </dialog>
-
-  <dialog id="orderDialog" class="sheet order-sheet">
-    <button class="sheet-close" data-close="orderDialog" aria-label="닫기">×</button>
-    <div id="orderContent"></div>
-  </dialog>
-
-  <dialog id="supportDialog" class="sheet">
-    <button class="sheet-close" data-close="supportDialog" aria-label="닫기">×</button>
-    <div id="supportContent"></div>
-  </dialog>
-
   <nav class="bottom-nav" aria-label="주요 메뉴">
-    <a href="/">HOME</a><a href="#products">SHOP</a><button id="supportButton">HELP</button><button id="bottomCartButton">BAG</button><button id="bottomAccountButton">MY</button>
+    <a href="/">HOME</a><a href="#products">SHOP</a><a href="/support/">HELP</a><a href="/cart/">BAG</a><a href="/account/">MY</a>
   </nav>
   <div id="toast" class="toast" role="status"></div>
   <script src="https://js.tosspayments.com/v2/standard"></script>

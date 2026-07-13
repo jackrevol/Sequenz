@@ -8,6 +8,10 @@ class StorefrontView(TemplateView):
     template_name = "storefront/index.html"
 
 
+class StorefrontPageView(TemplateView):
+    template_name = "storefront/page.html"
+
+
 class ProductDetailPageView(DetailView):
     model = ProductListing
     template_name = "storefront/product_detail.html"

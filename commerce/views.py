@@ -431,8 +431,8 @@ class TossPaymentPrepareView(APIView):
             "customer_name": order.buyer_name,
             "customer_email": order.buyer_email,
             "customer_mobile_phone": "".join(char for char in order.buyer_phone if char.isdigit()),
-            "success_url": request.build_absolute_uri("/?payment=success"),
-            "fail_url": request.build_absolute_uri("/?payment=fail"),
+            "success_url": request.build_absolute_uri("/checkout/?payment=success"),
+            "fail_url": request.build_absolute_uri("/checkout/?payment=fail"),
         })
 
 

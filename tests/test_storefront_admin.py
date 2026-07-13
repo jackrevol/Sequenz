@@ -1,5 +1,6 @@
 import pytest
 from django.contrib import admin
+from django.conf import settings
 
 from catalog.models import Brand, ProductListing
 from commerce.models import Order, Payment
@@ -28,6 +29,50 @@ def test_product_uses_dedicated_detail_page(client, listing_variant):
     assert b"product-page" in response.content
     assert b"siteSidebar" in response.content
     assert str(listing_variant.listing_id).encode() in response.content
+
+
+@pytest.mark.django_db
+def test_storefront_has_isolated_responsive_layout(client):
+    response = client.get("/")
+
+    assert b'class="storefront-page"' in response.content
+    assert b'class="storefront-main"' in response.content
+    stylesheet = (settings.BASE_DIR / "static/storefront/store.css").read_text()
+    script = (settings.BASE_DIR / "static/storefront/store.js").read_text()
+    assert ".hero.has-media" in stylesheet
+    assert "background-size:cover" in stylesheet
+    assert "globalThis.crypto?.randomUUID" in script
+    assert "hero.classList.add('has-media')" in script
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url", "page_kind"),
+    [
+        ("/cart/", "cart"),
+        ("/checkout/", "checkout"),
+        ("/account/", "account"),
+        ("/support/", "support"),
+        ("/orders/SEQ-TEST-001/", "order"),
+        ("/content/lookbooks/summer-edit/", "content"),
+    ],
+)
+def test_storefront_flows_have_dedicated_pages(client, url, page_kind):
+    response = client.get(url)
+
+    assert response.status_code == 200
+    assert f'data-page="{page_kind}"'.encode() in response.content
+    assert b'id="pageContent"' in response.content
+
+
+@pytest.mark.django_db
+def test_home_navigation_uses_pages_instead_of_dialogs(client):
+    response = client.get("/")
+
+    assert b'href="/cart/"' in response.content
+    assert b'href="/account/"' in response.content
+    assert b'href="/support/"' in response.content
+    assert b"<dialog" not in response.content
 
 
 def test_operational_models_are_registered_in_admin():

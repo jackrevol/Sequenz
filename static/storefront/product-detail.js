@@ -72,7 +72,7 @@ async function loadProductPage() {
     await detailApi('/api/commerce/cart/items/', { method:'POST', body:JSON.stringify({ listing_variant_id:variantId, quantity }) });
     const updatedCart = await detailApi('/api/commerce/cart/items/');
     document.querySelector('#detailCartCount').textContent = updatedCart.summary.item_count;
-    if (buyNow) location.href = '/?openCart=1'; else detailToast('장바구니에 담았습니다.');
+    if (buyNow) location.href = '/cart/'; else detailToast('장바구니에 담았습니다.');
   };
   document.querySelector('#detailAddCart').onclick = () => addToCart(false);
   document.querySelector('#detailBuyNow').onclick = () => addToCart(true);
