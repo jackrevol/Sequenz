@@ -59,6 +59,46 @@ DJANGO_SERVE_MEDIA_FILES=false
 
 When `DJANGO_SERVE_MEDIA_FILES=false`, serve `/media/` from object storage or a reverse proxy backed by the persistent media volume. The container health endpoint is `/healthz/`.
 
+## EC2 deployment
+
+`update_sequenz.sh` pulls the ECR image and performs a blue/green deployment. On the
+server, place the production `.env` file in the directory where the script is run,
+then configure the Nginx Proxy Manager Proxy Host as follows:
+
+```text
+Forward Hostname / IP: sequenz-active
+Forward Port:          8000
+```
+
+Deploy the latest image pushed from `main`:
+
+```bash
+./update_sequenz.sh
+```
+
+To deploy an immutable image created for a specific Git commit, pass its SHA tag:
+
+```bash
+./update_sequenz.sh --tag <git-sha>
+```
+
+The defaults assume the shared Docker network is `navi`, the Nginx Proxy Manager
+container is `ec2-user-nginx-proxy-manager-1`, and the persistent data volume is
+`sequenz_data`. Override them when the server uses different names:
+
+```bash
+NETWORK=proxy-network \
+NPM_CONTAINER=nginx-proxy-manager \
+DATA_VOLUME=sequenz_data \
+ENV_FILE=/opt/sequenz/.env \
+./update_sequenz.sh
+```
+
+The deployment also replaces the `sequenz-payment-expirer` background worker.
+Set `DEPLOY_WORKER=false` only when that job is managed separately.
+If the production `DJANGO_ALLOWED_HOSTS` does not include `localhost`, set
+`HEALTH_HOST_HEADER` to one of its configured hostnames when running the script.
+
 ## Initial APIs
 
 - `GET /api/catalog/listings/`
