@@ -1,12 +1,10 @@
 import hashlib
-import json
-from urllib import error, request
 
-from django.conf import settings
 from django.db import transaction
 from django.utils.text import slugify
 
 from catalog.models import Category
+from integrations.sabangnet_client import SabangnetApiClient, SabangnetApiError
 
 
 class SabangnetCategoryError(Exception):
@@ -14,26 +12,19 @@ class SabangnetCategoryError(Exception):
 
 
 class SabangnetCategoryClient:
-    def __init__(self, base_url=None, bearer_token=None, service_account_id=None, timeout=15):
-        self.base_url = base_url or settings.SABANGNET_API_BASE_URL
-        self.bearer_token = bearer_token or settings.SABANGNET_BEARER_TOKEN
-        self.service_account_id = service_account_id or settings.SABANGNET_SVC_ACCOUNT_ID
-        self.timeout = timeout
+    def __init__(self, base_url=None, bearer_token=None, service_account_id=None, timeout=None, api_client=None):
+        self.api_client = api_client or SabangnetApiClient(
+            base_url=base_url,
+            bearer_token=bearer_token,
+            service_account_id=service_account_id,
+            timeout=timeout,
+        )
 
     def fetch_categories(self):
-        if not self.base_url or not self.bearer_token or not self.service_account_id:
-            raise SabangnetCategoryError("사방넷 카테고리 API 환경변수가 설정되지 않았습니다.")
-        http_request = request.Request(
-            f"{self.base_url.rstrip('/')}/v3/sb/category",
-            headers={"Authorization": f"Bearer {self.bearer_token}", "X-Svc-Acnt-Id": self.service_account_id},
-        )
         try:
-            with request.urlopen(http_request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode())
-        except error.HTTPError as exc:
-            raise SabangnetCategoryError(f"사방넷 카테고리 조회가 HTTP {exc.code}로 실패했습니다.") from exc
-        except (error.URLError, TimeoutError, ValueError) as exc:
-            raise SabangnetCategoryError("사방넷 카테고리 응답을 처리하지 못했습니다.") from exc
+            return self.api_client.request_json("GET", "/category")
+        except SabangnetApiError as exc:
+            raise SabangnetCategoryError(str(exc)) from exc
 
 
 @transaction.atomic
@@ -81,7 +72,7 @@ def _category_paths(payload):
         category = payload.get("category")
         if isinstance(category, list) and category:
             paths.append(category)
-        for key in ("categories", "data", "result", "items"):
+        for key in ("response", "categories", "data", "data_list", "result", "items"):
             if key in payload:
                 paths.extend(_category_paths(payload[key]))
     return paths

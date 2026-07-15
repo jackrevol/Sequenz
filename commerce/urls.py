@@ -1,11 +1,12 @@
 from django.urls import path
 
-from .views import CartBenefitQuoteView, CartItemDetailView, CartItemView, GuestOrderLookupView, MemberOrderListView, OrderCancellationView, OrderClaimView, OrderDetailView, OrderView, TossPaymentConfirmView, TossPaymentPrepareView
+from .views import CartBenefitQuoteView, CartItemBulkView, CartItemDetailView, CartItemView, GuestOrderLookupView, MemberOrderListView, OrderCancellationView, OrderClaimView, OrderDetailView, OrderView, TossPaymentConfirmView, TossPaymentPrepareView
 
 
 urlpatterns = [
     path("cart/items/", CartItemView.as_view(), name="cart-items"),
     path("cart/items/<int:pk>/", CartItemDetailView.as_view(), name="cart-item-detail"),
+    path("cart/items/bulk/", CartItemBulkView.as_view(), name="cart-item-bulk"),
     path("cart/benefit-quote/", CartBenefitQuoteView.as_view(), name="cart-benefit-quote"),
     path("orders/", OrderView.as_view(), name="orders"),
     path("orders/mine/", MemberOrderListView.as_view(), name="member-orders"),

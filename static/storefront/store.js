@@ -1,5 +1,5 @@
 const initialParams = new URLSearchParams(location.search);
-const state = { brand: initialParams.get('brand') || '', category: initialParams.get('category') || '', ordering: 'recommended', query: initialParams.get('q') || '', attributes: {}, next: null, products: [], wishlist:new Set() };
+const state = { brand: initialParams.get('brand') || '', category: initialParams.get('category') || '', ordering: 'recommended', query: initialParams.get('q') || '', attributes: {}, minPrice:'', maxPrice:'', inStock:false, next: null, products: [], wishlist:new Set() };
 const createGuestKey = () => {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   if (globalThis.crypto?.getRandomValues) {
@@ -80,7 +80,19 @@ async function loadDiscovery() {
   document.querySelector('#attributeFilters').innerHTML = filters.map(filter => `<label>${h(filter.name)}<select data-attribute="${h(filter.name)}"><option value="">전체</option>${filter.values.map(value => `<option value="${h(value)}">${h(value)}</option>`).join('')}</select></label>`).join('');
   const items = [...keywords.recommended, ...keywords.popular].filter((item, index, array) => array.findIndex(other => other.keyword === item.keyword) === index);
   document.querySelector('#searchKeywords').innerHTML = items.map(item => `<button class="chip" data-keyword="${h(item.keyword)}">${h(item.keyword)}</button>`).join('');
+  renderRecentKeywords();
   document.querySelectorAll('[data-attribute]').forEach(select => { select.onchange = () => { if (select.value) state.attributes[select.dataset.attribute] = select.value; else delete state.attributes[select.dataset.attribute]; loadProducts(); }; });
+}
+
+function recentSearches() { return JSON.parse(localStorage.getItem('sequenzRecentSearches') || '[]'); }
+function rememberSearch(keyword) {
+  if (!keyword) return;
+  localStorage.setItem('sequenzRecentSearches', JSON.stringify([keyword, ...recentSearches().filter(item => item !== keyword)].slice(0, 8)));
+  renderRecentKeywords();
+}
+function renderRecentKeywords() {
+  const recent = recentSearches();
+  document.querySelector('#recentKeywords').innerHTML = recent.length ? `<span>최근</span>${recent.map(keyword => `<button class="chip" data-keyword="${h(keyword)}">${h(keyword)}</button>`).join('')}<button class="text-button" data-clear-recent="1">전체 삭제</button>` : '';
 }
 
 async function loadProducts(append = false) {
@@ -88,6 +100,9 @@ async function loadProducts(append = false) {
   if (state.brand) params.set('brand', state.brand);
   if (state.category) params.set('category', state.category);
   if (state.query) params.set('q', state.query);
+  if (state.minPrice) params.set('min_price', state.minPrice);
+  if (state.maxPrice) params.set('max_price', state.maxPrice);
+  if (state.inStock) params.set('in_stock', 'true');
   Object.entries(state.attributes).forEach(([name, value]) => params.append('attribute', `${name}:${value}`));
   const data = await api(append && state.next ? state.next : `/api/catalog/listings/?${params}`);
   state.products = append ? state.products.concat(data.results) : data.results;
@@ -106,7 +121,8 @@ function productCard(item) {
   const brand = item.product.brand?.name || 'SEQUENZ';
   const labels = [item.is_new_label && 'NEW', item.is_sale_label && 'SALE'].filter(Boolean).join(' · ');
   const primaryImage = item.product.images?.find(image => image.is_primary) || item.product.images?.[0];
-  return `<article class="product-card" data-product-id="${Number(item.id)}"><button class="wish-button" data-wish="${Number(item.id)}" aria-label="찜하기">${state.wishlist.has(Number(item.id)) ? '♥' : '♡'}</button><a class="product-card-link" href="/products/${Number(item.id)}/"><div class="product-image">${primaryImage ? `<img src="${h(safeUrl(primaryImage.image_url))}" alt="${h(primaryImage.alt_text || item.display_name)}" loading="lazy">` : h(brand)}</div><p class="brand-name">${h(brand)}</p><h3>${h(item.display_name)}</h3><p class="price">${item.consumer_price_snapshot > item.selling_price_snapshot ? `<del>${won(item.consumer_price_snapshot)}</del>` : ''}${won(item.selling_price_snapshot)}</p><p class="labels">${h(labels)}</p></a></article>`;
+  const available = item.variants.filter(variant => variant.status === 'active' && Number(variant.stock_quantity) > 0);
+  return `<article class="product-card" data-product-id="${Number(item.id)}"><button class="wish-button" data-wish="${Number(item.id)}" aria-label="찜하기">${state.wishlist.has(Number(item.id)) ? '♥' : '♡'}</button><a class="product-card-link" href="/products/${Number(item.id)}/"><div class="product-image">${primaryImage ? `<img src="${h(safeUrl(primaryImage.image_url))}" alt="${h(primaryImage.alt_text || item.display_name)}" loading="lazy">` : h(brand)}</div><p class="brand-name">${h(brand)}</p><h3>${h(item.display_name)}</h3><p class="price">${item.consumer_price_snapshot > item.selling_price_snapshot ? `<del>${won(item.consumer_price_snapshot)}</del>` : ''}${won(item.selling_price_snapshot)}</p><p class="labels">${h(labels || (available.length ? '' : 'SOLD OUT'))}</p></a>${available.length ? `<button class="quick-cart" data-quick-cart="${Number(item.id)}" data-variant="${available.length === 1 ? Number(available[0].id) : ''}">빠른 담기</button>` : ''}</article>`;
 }
 
 async function openProduct(id) {
@@ -237,6 +253,13 @@ document.addEventListener('click', async event => {
     try { if (state.wishlist.has(listingId)) { await api(`/api/accounts/wishlist/${listingId}/`, { method:'DELETE' }); state.wishlist.delete(listingId); event.target.textContent = '♡'; toast('찜 목록에서 삭제했습니다.'); } else { await api('/api/accounts/wishlist/', { method:'POST', body:JSON.stringify({ listing_id:listingId }) }); state.wishlist.add(listingId); event.target.textContent = '♥'; toast('찜 목록에 추가했습니다.'); } } catch (_) { toast('로그인 후 찜할 수 있습니다.'); }
     return;
   }
+  if (event.target.dataset.quickCart) {
+    event.stopPropagation();
+    const variantId = Number(event.target.dataset.variant);
+    if (!variantId) return openProduct(event.target.dataset.quickCart);
+    try { await api('/api/commerce/cart/items/', { method:'POST', body:JSON.stringify({ listing_variant_id:variantId, quantity:1 }) }); await refreshCartCount(); toast('장바구니에 담았습니다.'); } catch (error) { toast(error.message); }
+    return;
+  }
   const card = event.target.closest('[data-product-id]'); if (card) return openProduct(card.dataset.productId);
   if (event.target.dataset.close) document.querySelector(`#${event.target.dataset.close}`).close();
   if (event.target.dataset.remove) { await api(`/api/commerce/cart/items/${event.target.dataset.remove}/`, { method:'DELETE' }); await openCart(); await refreshCartCount(); }
@@ -246,7 +269,8 @@ document.addEventListener('click', async event => {
   if (event.target.dataset.order) openOrder(event.target.dataset.order);
   if (event.target.dataset.reviewOrder) { document.querySelector('#accountDialog').close(); await openOrder(event.target.dataset.reviewOrder); showReviewForm(event.target.dataset.reviewItem); return; }
   if (event.target.dataset.reviewItem) showReviewForm(event.target.dataset.reviewItem);
-  if (event.target.dataset.keyword) { state.query = event.target.dataset.keyword; document.querySelector('#searchInput').value = state.query; loadProducts(); }
+  if (event.target.dataset.keyword) { state.query = event.target.dataset.keyword; document.querySelector('#searchInput').value = state.query; rememberSearch(state.query); loadProducts(); }
+  if (event.target.dataset.clearRecent) { localStorage.removeItem('sequenzRecentSearches'); renderRecentKeywords(); }
   const curated = event.target.closest('[data-curated-type]'); if (curated) openCuratedContent(curated.dataset.curatedType, curated.dataset.curatedSlug);
   const reviewForm = event.target.closest('[data-review-form]');
 });
@@ -263,5 +287,7 @@ function toast(message) { const el = document.querySelector('#toast'); el.textCo
 document.querySelector('#loadMoreButton').onclick = () => loadProducts(true);
 document.querySelector('#sortSelect').onchange = event => { state.ordering = event.target.value; loadProducts(); };
 document.querySelector('#searchInput').value = state.query;
-let timer; document.querySelector('#searchInput').oninput = event => { clearTimeout(timer); timer = setTimeout(() => { state.query = event.target.value.trim(); loadProducts(); }, 250); };
+let timer; document.querySelector('#searchInput').oninput = event => { clearTimeout(timer); timer = setTimeout(() => { state.query = event.target.value.trim(); if (state.query) rememberSearch(state.query); loadProducts(); }, 350); };
+['minPriceFilter','maxPriceFilter'].forEach(id => { document.querySelector(`#${id}`).onchange = event => { state[id === 'minPriceFilter' ? 'minPrice' : 'maxPrice'] = event.target.value; loadProducts(); }; });
+document.querySelector('#inStockFilter').onchange = event => { state.inStock = event.target.checked; loadProducts(); };
 loadWishlist().finally(() => Promise.all([loadBrands(), loadProducts(), loadContent(), loadDiscovery(), refreshCartCount()]).catch(error => toast(error.message)));

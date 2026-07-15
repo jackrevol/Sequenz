@@ -1,6 +1,6 @@
 import pytest
 
-from catalog.models import Product, ProductImage, ProductListing, ProductSyncSnapshot
+from catalog.models import Category, Product, ProductImage, ProductListing, ProductSyncSnapshot
 from integrations.sabangnet_products import sync_product
 
 
@@ -105,3 +105,21 @@ def test_catalog_api_exposes_primary_sabangnet_image(api_client):
     images = response.json()["results"][0]["product"]["images"]
     assert images[0]["is_primary"] is True
     assert images[0]["image_url"] == "https://example.com/sync-main.jpg"
+
+
+@pytest.mark.django_db
+def test_sandbox_product_uses_deepest_my_category_and_excludes_service_account_from_snapshot():
+    category = Category.objects.create(name="Tops", slug="tops", sabangnet_code="010101", level=3)
+    payload = {
+        **PRODUCT_PAYLOAD,
+        "productCode": "SB-SANDBOX-1",
+        "myCategoryCodeL": "01",
+        "myCategoryCodeM": "0101",
+        "myCategoryCodeS": "010101",
+        "svcAcntId": "must-not-be-persisted",
+    }
+
+    product = sync_product(payload)
+
+    assert product.category == category
+    assert "svcAcntId" not in product.raw_sabangnet_payload

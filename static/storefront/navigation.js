@@ -2,6 +2,9 @@
   const sidebar = document.querySelector('#siteSidebar');
   const backdrop = document.querySelector('#sidebarBackdrop');
   const menuButton = document.querySelector('#menuButton');
+  const closeButton = document.querySelector('#sidebarClose');
+  const backgroundTargets = [...document.querySelectorAll('body > header, body > main, body > footer, body > nav.bottom-nav')];
+  let previousFocus = null;
   if (!sidebar || !backdrop || !menuButton) return;
 
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -9,24 +12,40 @@
   })[char]);
 
   const open = () => {
+    previousFocus = document.activeElement;
     sidebar.classList.add('open');
     sidebar.setAttribute('aria-hidden', 'false');
+    menuButton.setAttribute('aria-expanded', 'true');
     backdrop.hidden = false;
     requestAnimationFrame(() => backdrop.classList.add('open'));
     document.body.classList.add('sidebar-open');
+    backgroundTargets.forEach(element => element.setAttribute('inert', ''));
+    closeButton.focus();
   };
   const close = () => {
     sidebar.classList.remove('open');
     sidebar.setAttribute('aria-hidden', 'true');
+    menuButton.setAttribute('aria-expanded', 'false');
     backdrop.classList.remove('open');
     document.body.classList.remove('sidebar-open');
+    backgroundTargets.forEach(element => element.removeAttribute('inert'));
     setTimeout(() => { backdrop.hidden = true; }, 220);
+    if (previousFocus?.focus) previousFocus.focus();
   };
 
   menuButton.addEventListener('click', open);
-  document.querySelector('#sidebarClose').addEventListener('click', close);
+  closeButton.addEventListener('click', close);
   backdrop.addEventListener('click', close);
-  document.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
+  sidebar.addEventListener('click', event => { if (event.target.closest('a')) close(); });
+  document.addEventListener('keydown', event => {
+    if (!sidebar.classList.contains('open')) return;
+    if (event.key === 'Escape') return close();
+    if (event.key !== 'Tab') return;
+    const focusable = [...sidebar.querySelectorAll('a,button,summary,[tabindex]:not([tabindex="-1"])')].filter(element => !element.hidden);
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  });
 
   Promise.all([
     fetch('/api/catalog/categories/').then(response => response.json()),

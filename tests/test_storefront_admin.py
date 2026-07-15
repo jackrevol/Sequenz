@@ -13,6 +13,9 @@ def test_storefront_is_available(client):
     assert response.status_code == 200
     assert b"SEQUENZ" in response.content
     assert b"productGrid" in response.content
+    assert b"skip-link" in response.content
+    assert b"site-footer" in response.content
+    assert b"favicon.svg" in response.content
 
 
 @pytest.mark.django_db
@@ -29,6 +32,7 @@ def test_product_uses_dedicated_detail_page(client, listing_variant):
     assert b"product-page" in response.content
     assert b"siteSidebar" in response.content
     assert str(listing_variant.listing_id).encode() in response.content
+    assert b"site-footer" in response.content
 
 
 @pytest.mark.django_db

@@ -1,13 +1,13 @@
 import json
 from dataclasses import dataclass
 from datetime import date
-from urllib import error, request
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from commerce.models import Order, OrderStatusHistory, Shipment
+from integrations.sabangnet_client import SabangnetApiClient, SabangnetApiError, extract_data_list
 
 
 class SabangnetStatusError(Exception):
@@ -22,15 +22,15 @@ class StatusSyncResult:
 
 
 class SabangnetOrderStatusClient:
-    def __init__(self, base_url=None, bearer_token=None, service_account_id=None, timeout=15):
-        self.base_url = base_url or settings.SABANGNET_API_BASE_URL
-        self.bearer_token = bearer_token or settings.SABANGNET_BEARER_TOKEN
-        self.service_account_id = service_account_id or settings.SABANGNET_SVC_ACCOUNT_ID
-        self.timeout = timeout
+    def __init__(self, base_url=None, bearer_token=None, service_account_id=None, timeout=None, api_client=None):
+        self.api_client = api_client or SabangnetApiClient(
+            base_url=base_url,
+            bearer_token=bearer_token,
+            service_account_id=service_account_id,
+            timeout=timeout,
+        )
 
     def fetch_orders(self, start_date, end_date, page=1, per_page=100):
-        if not self.base_url or not self.bearer_token or not self.service_account_id:
-            raise SabangnetStatusError("사방넷 주문조회 API 환경변수가 설정되지 않았습니다.")
         response_items = ["SB_ORD_NO", "SHOP_ORD_NO", "ORDER_STATUS"]
         response_items.extend(_configured_shipment_response_items())
         payload = {
@@ -42,23 +42,10 @@ class SabangnetOrderStatusClient:
             "updateOrderStsYn": "N",
             "responseItems": list(dict.fromkeys(response_items)),
         }
-        http_request = request.Request(
-            f"{self.base_url.rstrip('/')}/v3/sb/order",
-            data=json.dumps(payload).encode(),
-            method="GET",
-            headers={
-                "Authorization": f"Bearer {self.bearer_token}",
-                "X-Svc-Acnt-Id": self.service_account_id,
-                "Content-Type": "application/json",
-            },
-        )
         try:
-            with request.urlopen(http_request, timeout=self.timeout) as response:
-                body = json.loads(response.read().decode())
-        except error.HTTPError as exc:
-            raise SabangnetStatusError(f"사방넷 주문조회가 HTTP {exc.code}로 실패했습니다.") from exc
-        except (error.URLError, TimeoutError, ValueError) as exc:
-            raise SabangnetStatusError("사방넷 주문조회 응답을 처리하지 못했습니다.") from exc
+            body = self.api_client.request_json("GET", "/order", json_body=payload)
+        except SabangnetApiError as exc:
+            raise SabangnetStatusError(str(exc)) from exc
         return _extract_order_rows(body)
 
 
@@ -144,11 +131,13 @@ def _sync_shipment(order_id, row, sabangnet_order_no, shipment_status):
         return False
     carrier_code = _first_text(
         row, "DELIVERY_COMPANY_CODE", "DELIVERY_AGENCY_ID", "CARRIER_CODE",
-        "deliveryCompanyCode", "deliveryAgencyId", "carrierCode",
+        "LOGISTICS_CD", "LOGISTICS_ID",
+        "deliveryCompanyCode", "deliveryAgencyId", "carrierCode", "logisticsCode", "logisticsId",
     )
     carrier_name = _first_text(
         row, "DELIVERY_COMPANY_NAME", "DELIVERY_AGENCY_NAME", "CARRIER_NAME",
-        "deliveryCompanyName", "deliveryAgencyName", "carrierName",
+        "LOGISTICS_NM",
+        "deliveryCompanyName", "deliveryAgencyName", "carrierName", "logisticsName",
     )
     existing = Shipment.objects.filter(
         order_id=order_id, carrier_code=carrier_code, tracking_number=tracking_number
@@ -184,19 +173,15 @@ def _sync_shipment(order_id, row, sabangnet_order_no, shipment_status):
 
 
 def _extract_order_rows(payload):
-    if isinstance(payload, list):
-        return payload
-    if not isinstance(payload, dict):
-        return []
-    for key in ("items", "results", "data", "orderList", "orders"):
-        value = payload.get(key)
-        if isinstance(value, list):
-            return value
-        if isinstance(value, dict):
-            nested = _extract_order_rows(value)
+    rows = extract_data_list(payload)
+    if rows:
+        return rows
+    if isinstance(payload, dict):
+        for key in ("response", "orderList"):
+            nested = _extract_order_rows(payload.get(key))
             if nested:
                 return nested
-    return []
+    return payload if isinstance(payload, list) else []
 
 
 def _compact_date(value):

@@ -1,6 +1,6 @@
 # 사방넷 개발용 API 문서
 
-확인일: 2026-07-07
+확인일: 2026-07-13
 
 원본:
 
@@ -32,6 +32,7 @@
 | `SECRET_KEY` | bcrypt 형식 Secret Key | 배포 시크릿 |
 | `SVC_ACNT_ID` | 서비스 계정 ID | 배포 시크릿 |
 | `CLIENT_TYPE` | 앱 유형, 샘플 기준 `SB_APP` | 배포 시크릿 |
+| `AUTH_MODE` | `SANDBOX` 또는 `PRODUCTION`. 생략 시 `PRODUCTION` | 환경 설정 |
 | `BEARER_TOKEN` | 선택. 직접 지정 시 토큰 발급 생략 | 로컬 테스트 전용 |
 
 토큰 발급 흐름:
@@ -39,13 +40,30 @@
 1. 현재 시각 밀리초 timestamp를 생성한다.
 2. `{CLIENT_ID}_{timestamp}` 형태의 데이터를 만든다.
 3. `SECRET_KEY`로 bcrypt hash를 생성한 뒤 Base64 인코딩해 `secretSign`을 만든다.
-4. OAuth 토큰 API를 호출해 access token을 받는다.
-5. 이후 API 요청에 `Authorization: Bearer {token}`과 `X-Svc-Acnt-Id: {SVC_ACNT_ID}`를 포함한다.
+4. 샌드박스 Secret을 사용할 때 `authMode=SANDBOX`를 포함해 OAuth 토큰 API를 호출한다.
+5. access token을 받는다.
+6. 이후 API 요청에 `Authorization: Bearer {token}`과 `X-Svc-Acnt-Id: {SVC_ACNT_ID}`를 포함한다.
 
 주의:
 
 - 서버 시간이 5분 이상 어긋나면 인증 실패 가능성이 있다.
 - `SECRET_KEY`, access token, 서비스 계정 ID는 로그에 남기지 않는다.
+
+### 2.1 샌드박스 실검증 결과
+
+2026-07-13 `https://sandbox.sabangnet.co.kr`에서 읽기 및 변경 API를 확인했다.
+
+- 허용 IP 미등록 시 `AUTH_008`, 잘못된 환경 모드/서명은 `AUTH_003`으로 응답한다.
+- 샌드박스 Secret으로 토큰을 발급할 때 `authMode=SANDBOX`가 필요하다.
+- 실제 성공 응답 envelope는 `{"code": 200, "message": "...", "data": ...}` 형식이다.
+- 목록 pagination은 `data.results`, `totalItemCnt`, `totalPage`, `hasNext` 필드를 사용한다.
+- 주문 배송사 코드는 `LOGISTICS_CD`, 배송사명은 `LOGISTICS_NM`, 송장번호는 `WAYBILL_NO`로 확인됐다.
+- 상품 카테고리는 `myCategoryCodeL`, `myCategoryCodeM`, `myCategoryCodeS`로 내려온다.
+- 주문 상태 변경, 운송장, 문의 답변, 추가상품, 채널상품 변경 API는 개별 결과 `status=true`, 성공 1건으로 확인됐다.
+- 상품·카테고리 upsert는 envelope `200`을 반환하지만 샌드박스 조회가 고정 fixture를 반환하므로 변경값 재조회 검증은 불가능했다.
+- 변경 API는 HTTP/envelope 성공 외에 `successCount`, `failCount`, `results[].status`를 반드시 확인해야 한다.
+- 샌드박스는 존재하지 않는 주문번호와 잘못된 상태 코드에도 변경 성공을 반환했고, 주문·문의·카테고리·상품 재조회 결과도 바뀌지 않았다.
+- 따라서 샌드박스 변경 API는 인증, endpoint, 요청/응답 계약 smoke test에만 사용하고 실제 영속성·상태 전이 검증은 운영 전 별도 검증 환경에서 수행해야 한다.
 
 ## 3. 사방넷 API 엔드포인트
 
@@ -61,6 +79,7 @@
 | 쇼핑몰 | 쇼핑몰 정보 조회 | GET | `/v3/sb/mall/{shopDivCode}` |
 | 운송장 | 운송장 저장/수정 | POST | `/v3/sb/waybill` |
 | 주문 | 주문 목록 조회 | GET | `/v3/sb/order` |
+| 주문 | 주문 상태 변경 | POST | `/v3/sb/order-status` |
 | 추가상품 | 추가상품 등록/수정 | POST | `/v3/sb/additional-product` |
 | 카테고리 | 전체 마이카테고리 목록 조회 | GET | `/v3/sb/category` |
 | 카테고리 | 마이카테고리 등록/수정 | POST | `/v3/sb/category` |
@@ -331,6 +350,27 @@
 | `CM_SKU_NM` | 옵션명 |
 | `ORD_CNT` | 주문 수량 |
 | `CT_DELIVERY_COST` | 배송비 |
+
+### 4.8.1 주문 상태 변경
+
+- Method/Path: `POST /v3/sb/order-status`
+- 용도: 사방넷 주문을 주문확인, 출고완료, 취소·교환·반품 접수/완료 상태로 변경한다.
+- 입력 위치: JSON body
+
+```json
+{
+  "orders": [
+    {
+      "sbOrderNo": "20260101000001",
+      "targetStatusCode": "ORDER_CONFIRM"
+    }
+  ]
+}
+```
+
+허용 상태 코드는 `ORDER_CONFIRM`, `DELIVERY_COMPLETED`, `CANCEL_RECEIPT`, `EXCHANGE_RECEIPT`,
+`RETURN_RECEIPT`, `CANCEL_COMPLETED`, `EXCHANGE_COMPLETED`, `RETURN_COMPLETED`이다. 현재 상태에서
+허용되는 전이만 성공하며, 응답의 `failCount`와 `results[].status`를 확인해야 한다.
 
 ### 4.9 추가상품 등록/수정
 

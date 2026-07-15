@@ -1,13 +1,11 @@
 import hashlib
-import json
-from urllib import error, parse, request
 
-from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
 from catalog.models import Brand, Category, Product, ProductAttribute, ProductImage, ProductInformationNotice, ProductListingVariant, ProductSyncSnapshot, ProductVariant
+from integrations.sabangnet_client import SabangnetApiClient, SabangnetApiError
 
 
 class SabangnetProductError(Exception):
@@ -15,15 +13,15 @@ class SabangnetProductError(Exception):
 
 
 class SabangnetProductClient:
-    def __init__(self, base_url=None, bearer_token=None, service_account_id=None, timeout=15):
-        self.base_url = base_url or settings.SABANGNET_API_BASE_URL
-        self.bearer_token = bearer_token or settings.SABANGNET_BEARER_TOKEN
-        self.service_account_id = service_account_id or settings.SABANGNET_SVC_ACCOUNT_ID
-        self.timeout = timeout
+    def __init__(self, base_url=None, bearer_token=None, service_account_id=None, timeout=None, api_client=None):
+        self.api_client = api_client or SabangnetApiClient(
+            base_url=base_url,
+            bearer_token=bearer_token,
+            service_account_id=service_account_id,
+            timeout=timeout,
+        )
 
     def fetch_product(self, product_code=None, custom_product_code=None):
-        if not self.base_url or not self.bearer_token or not self.service_account_id:
-            raise SabangnetProductError("사방넷 상품조회 API 환경변수가 설정되지 않았습니다.")
         params = {}
         if custom_product_code:
             params["customProductCode"] = custom_product_code
@@ -31,18 +29,10 @@ class SabangnetProductClient:
             params["productCode"] = product_code
         else:
             raise SabangnetProductError("상품코드 또는 자체상품코드가 필요합니다.")
-        url = f"{self.base_url.rstrip('/')}/v3/sb/product?{parse.urlencode(params)}"
-        http_request = request.Request(
-            url,
-            headers={"Authorization": f"Bearer {self.bearer_token}", "X-Svc-Acnt-Id": self.service_account_id},
-        )
         try:
-            with request.urlopen(http_request, timeout=self.timeout) as response:
-                payload = json.loads(response.read().decode())
-        except error.HTTPError as exc:
-            raise SabangnetProductError(f"사방넷 상품조회가 HTTP {exc.code}로 실패했습니다.") from exc
-        except (error.URLError, TimeoutError, ValueError) as exc:
-            raise SabangnetProductError("사방넷 상품조회 응답을 처리하지 못했습니다.") from exc
+            payload = self.api_client.request_json("GET", "/product", query=params)
+        except SabangnetApiError as exc:
+            raise SabangnetProductError(str(exc)) from exc
         product_data = _extract_product(payload)
         if not product_data:
             raise SabangnetProductError("사방넷 상품조회 결과가 비어 있습니다.")
@@ -140,7 +130,18 @@ def _sync_brand(name):
 
 
 def _sync_product_category(payload):
-    code = str(_value(payload, "categoryCode", "myCategoryCode", "CATEGORY_CODE", default="")).strip()
+    code = str(
+        _value(
+            payload,
+            "categoryCode",
+            "myCategoryCode",
+            "myCategoryCodeS",
+            "myCategoryCodeM",
+            "myCategoryCodeL",
+            "CATEGORY_CODE",
+            default="",
+        )
+    ).strip()
     name = str(_value(payload, "categoryName", "myCategoryName", "CATEGORY_NAME", default="")).strip()
     if not code:
         return None
@@ -289,7 +290,7 @@ def _extract_product(payload):
         return None
     if _value(payload, "productCode", "PRODUCT_CODE"):
         return payload
-    for key in ("product", "data", "result", "items", "products"):
+    for key in ("product", "response", "data", "data_list", "result", "items", "products"):
         nested = payload.get(key)
         result = _extract_product(nested)
         if result:
@@ -323,8 +324,8 @@ def _nullable_text(value):
 
 
 def _safe_payload_summary(payload):
-    excluded = {"token", "accessToken", "secret", "password"}
-    return {key: value for key, value in payload.items() if key not in excluded}
+    excluded = {"token", "accesstoken", "secret", "password", "svcacntid"}
+    return {key: value for key, value in payload.items() if key.lower() not in excluded}
 
 
 def _changed_fields(existing, defaults):

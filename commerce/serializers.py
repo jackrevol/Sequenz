@@ -28,8 +28,26 @@ class CartItemCreateSerializer(serializers.Serializer):
         return value
 
 
-class CartItemQuantitySerializer(serializers.Serializer):
-    quantity = serializers.IntegerField(min_value=1)
+class CartItemUpdateSerializer(serializers.Serializer):
+    quantity = serializers.IntegerField(min_value=1, required=False)
+    listing_variant_id = serializers.IntegerField(required=False)
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError("변경할 수량 또는 옵션이 필요합니다.")
+        variant_id = attrs.get("listing_variant_id")
+        if variant_id is not None:
+            create = CartItemCreateSerializer(
+                data={"listing_variant_id": variant_id, "quantity": attrs.get("quantity", 1)}
+            )
+            create.is_valid(raise_exception=True)
+            attrs["listing_variant"] = create.context["listing_variant"]
+        return attrs
+
+
+class CartBulkActionSerializer(serializers.Serializer):
+    item_ids = serializers.ListField(child=serializers.IntegerField(), allow_empty=False)
+    action = serializers.ChoiceField(choices=["delete", "move_to_wishlist"])
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -37,6 +55,18 @@ class CartItemSerializer(serializers.ModelSerializer):
     listing_id = serializers.IntegerField(source="listing.id")
     display_name = serializers.CharField(source="listing.display_name")
     option_display_name = serializers.CharField(source="listing_variant.variant.option_display_name")
+    available_variants = serializers.SerializerMethodField()
+
+    def get_available_variants(self, item):
+        return [
+            {
+                "id": variant.id,
+                "option_display_name": variant.variant.option_display_name,
+                "stock_quantity": variant.variant.available_quantity,
+            }
+            for variant in item.listing.variants.all()
+            if variant.status == ProductListingVariant.Status.ACTIVE and variant.variant.available_quantity > 0
+        ]
 
     class Meta:
         model = CartItem
@@ -46,6 +76,7 @@ class CartItemSerializer(serializers.ModelSerializer):
             "listing_variant_id",
             "display_name",
             "option_display_name",
+            "available_variants",
             "quantity",
             "unit_price_snapshot",
             "line_total",
@@ -64,6 +95,7 @@ class OrderCreateSerializer(serializers.Serializer):
     delivery_memo = serializers.CharField(max_length=240, required=False, allow_blank=True)
     coupon_code = serializers.CharField(max_length=80, required=False, allow_blank=True)
     point_to_use = serializers.IntegerField(min_value=0, required=False, default=0)
+    cart_item_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_empty=False)
 
 
 class OrderSerializer(serializers.ModelSerializer):
