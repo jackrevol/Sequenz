@@ -3,8 +3,8 @@ services:
     build:
       context: .
     image: sequenz:latest
-    env_file:
-      - .env
+    environment:
+      DJANGO_ENV: development
     ports:
       - "8000:8000"
     volumes:
@@ -13,8 +13,8 @@ services:
 
   payment-expirer:
     image: sequenz:latest
-    env_file:
-      - .env
+    environment:
+      DJANGO_ENV: development
     command:
       - sh
       - -c

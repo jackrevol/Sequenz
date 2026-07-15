@@ -1,6 +1,7 @@
 import pytest
 from django.contrib import admin
 from django.conf import settings
+from django.test import override_settings
 
 from catalog.models import Brand, ProductListing
 from commerce.models import Order, Payment
@@ -23,6 +24,20 @@ def test_container_health_endpoint_checks_database(client):
     response = client.get("/healthz/")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.django_db
+@override_settings(
+    TOSS_CLIENT_KEY="",
+    TOSS_SECRET_KEY="",
+    SABANGNET_CLIENT_ID="",
+    SABANGNET_CLIENT_SECRET="",
+    SABANGNET_BEARER_TOKEN="",
+    SABANGNET_SVC_ACCOUNT_ID="",
+)
+def test_storefront_and_health_are_available_without_external_credentials(client):
+    assert client.get("/").status_code == 200
+    assert client.get("/healthz/").status_code == 200
 
 
 @pytest.mark.django_db

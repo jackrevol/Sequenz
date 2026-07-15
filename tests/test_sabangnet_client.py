@@ -3,6 +3,7 @@ import json
 from urllib import error, parse
 
 import pytest
+from django.conf import settings
 
 from integrations.sabangnet_client import SabangnetApiClient, SabangnetApiError, extract_data_list, response_count
 from integrations.sabangnet_products import _extract_product
@@ -10,6 +11,15 @@ from integrations.sabangnet_status import _extract_order_rows
 
 
 SECRET = "$2a$04$abcdefghijklmnopqrstuu"
+
+
+def test_sabangnet_environment_urls_are_fixed():
+    assert settings.SABANGNET_BASE_URLS == {
+        "PRODUCTION": "https://api.sabangnet.co.kr",
+        "SANDBOX": "https://sandbox.sabangnet.co.kr",
+    }
+    assert settings.SABANGNET_API_BASE_URL == "https://api.sabangnet.co.kr"
+    assert settings.SABANGNET_TOKEN_URL == "https://api.sabangnet.co.kr/oauth2/token"
 
 
 class FakeResponse:

@@ -4,6 +4,7 @@ set -euo pipefail
 ECR_REGISTRY="${ECR_REGISTRY:-775145693936.dkr.ecr.ap-northeast-2.amazonaws.com}"
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-samsincr/squenz}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
+SSM_PARAMETER_PATH="${SSM_PARAMETER_PATH:-/sequenz/production}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 NETWORK="${NETWORK:-navi}"
 NPM_CONTAINER="${NPM_CONTAINER:-ec2-user-nginx-proxy-manager-1}"
@@ -16,14 +17,17 @@ HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-2}"
 GRACE_SECONDS="${GRACE_SECONDS:-10}"
 CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.10.1}"
 RESTART_POLICY="${RESTART_POLICY:-unless-stopped}"
-ENV_FILE="${ENV_FILE:-.env}"
 DATA_VOLUME="${DATA_VOLUME:-sequenz_data}"
 DEPLOY_WORKER="${DEPLOY_WORKER:-true}"
 PREFIX="${PREFIX:-sequenz}"
 LEGACY_CONTAINER="${LEGACY_CONTAINER:-sequenz}"
 SKIP_ECR_LOGIN="false"
+SKIP_SSM="false"
 DEPLOYMENT_SWITCHED="false"
 CANDIDATE_CONTAINER=""
+SSM_RAW_FILE=""
+SSM_ENV_FILE=""
+DOCKER_ENV_ARGS=()
 
 usage() {
   cat <<'USAGE'
@@ -31,6 +35,7 @@ Usage: ./update_sequenz.sh [options]
 
 Options:
   --tag TAG              Deploy a specific ECR image tag (default: latest)
+  --skip-ssm             Skip Parameter Store lookup
   --skip-ecr-login       Skip ECR docker login before pulling the image
   -h, --help             Show this help
 
@@ -38,6 +43,7 @@ Environment overrides:
   ECR_REGISTRY           ECR registry hostname
   IMAGE_REPOSITORY       ECR repository name (default: samsincr/squenz)
   AWS_REGION             AWS region for ECR login (default: ap-northeast-2)
+  SSM_PARAMETER_PATH     Parameter path (default: /sequenz/production)
   IMAGE_TAG              Image tag (default: latest)
   NETWORK                Docker network shared with NPM (default: navi)
   NPM_CONTAINER          Nginx Proxy Manager container name
@@ -48,7 +54,6 @@ Environment overrides:
   HEALTH_RETRIES         Health check retry count (default: 30)
   HEALTH_INTERVAL_SECONDS Health check interval seconds (default: 2)
   GRACE_SECONDS          Seconds to keep the previous slot (default: 10)
-  ENV_FILE               Production env file path (default: .env)
   DATA_VOLUME            Persistent /data volume (default: sequenz_data)
   DEPLOY_WORKER          Also replace payment-expirer: true/false (default: true)
   RESTART_POLICY         Docker restart policy (default: unless-stopped)
@@ -70,6 +75,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-ecr-login)
       SKIP_ECR_LOGIN="true"
+      shift
+      ;;
+    --skip-ssm)
+      SKIP_SSM="true"
       shift
       ;;
     -h|--help)
@@ -149,6 +158,9 @@ cleanup_failed_candidate() {
     log "Removing unpromoted deployment candidate: $CANDIDATE_CONTAINER"
     remove_container_if_exists "$CANDIDATE_CONTAINER"
   fi
+
+  [[ -z "$SSM_RAW_FILE" ]] || rm -f "$SSM_RAW_FILE"
+  [[ -z "$SSM_ENV_FILE" ]] || rm -f "$SSM_ENV_FILE"
 }
 
 trap cleanup_failed_candidate EXIT
@@ -162,6 +174,60 @@ ecr_login() {
   log "Logging in to ECR registry: $ECR_REGISTRY"
   aws ecr get-login-password --region "$AWS_REGION" \
     | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+}
+
+prepare_parameter_store_environment() {
+  local parameter_name
+  local parameter_value
+  local variable_name
+  local parameter_count=0
+
+  if [[ "$SKIP_SSM" == "true" ]]; then
+    log "Skipping Parameter Store lookup."
+    return 0
+  fi
+
+  if ! command -v aws >/dev/null 2>&1; then
+    log "WARNING: aws command not found; continuing with baked-in defaults."
+    return 0
+  fi
+
+  SSM_RAW_FILE="$(mktemp "${TMPDIR:-/tmp}/sequenz-ssm-raw.XXXXXX")"
+  SSM_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/sequenz-ssm-env.XXXXXX")"
+  chmod 600 "$SSM_RAW_FILE" "$SSM_ENV_FILE"
+
+  log "Loading optional configuration from Parameter Store: $SSM_PARAMETER_PATH"
+  if ! aws ssm get-parameters-by-path \
+    --path "$SSM_PARAMETER_PATH" \
+    --with-decryption \
+    --region "$AWS_REGION" \
+    --query 'Parameters[].[Name,Value]' \
+    --output text > "$SSM_RAW_FILE" 2>/dev/null; then
+    log "WARNING: Parameter Store lookup failed; continuing with baked-in defaults."
+    return 0
+  fi
+
+  while IFS=$'\t' read -r parameter_name parameter_value; do
+    [[ -n "$parameter_name" ]] || continue
+    [[ -n "$parameter_value" && "$parameter_value" != "None" ]] || continue
+    variable_name="${parameter_name##*/}"
+
+    if [[ ! "$variable_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      log "WARNING: Ignoring invalid Parameter Store key: $parameter_name"
+      continue
+    fi
+
+    printf '%s=%s\n' "$variable_name" "$parameter_value" >> "$SSM_ENV_FILE"
+    ((parameter_count += 1))
+  done < "$SSM_RAW_FILE"
+
+  if [[ "$parameter_count" -eq 0 ]]; then
+    log "No usable Parameter Store values found; continuing with baked-in defaults."
+    return 0
+  fi
+
+  DOCKER_ENV_ARGS=(--env-file "$SSM_ENV_FILE")
+  log "Loaded ${parameter_count} optional Parameter Store value(s)."
 }
 
 wait_for_health() {
@@ -198,7 +264,7 @@ deploy_worker() {
   docker run -d \
     --name "$next_worker" \
     --network "$NETWORK" \
-    --env-file "$ENV_FILE" \
+    "${DOCKER_ENV_ARGS[@]}" \
     --mount "type=volume,source=${DATA_VOLUME},target=/data" \
     --restart "$RESTART_POLICY" \
     "$IMAGE" \
@@ -217,7 +283,6 @@ deploy_worker() {
 }
 
 command -v docker >/dev/null 2>&1 || die "docker command not found."
-[[ -f "$ENV_FILE" ]] || die "Environment file not found: $ENV_FILE"
 network_exists "$NETWORK" || die "Docker network not found: $NETWORK"
 container_running "$NPM_CONTAINER" || die "NPM container is not running: $NPM_CONTAINER"
 
@@ -227,6 +292,8 @@ if [[ "$SKIP_ECR_LOGIN" != "true" ]]; then
 else
   log "Skipping ECR login."
 fi
+
+prepare_parameter_store_environment
 
 CURRENT="$(current_slot || true)"
 if [[ -z "$CURRENT" ]]; then
@@ -242,7 +309,6 @@ else
 fi
 
 log "Image: $IMAGE"
-log "Environment file: $ENV_FILE"
 log "Persistent volume: $DATA_VOLUME"
 log "Current slot: ${CURRENT:-none}"
 log "Next slot: $NEXT"
@@ -255,7 +321,7 @@ docker run -d \
   --name "$NEXT" \
   --network "$NETWORK" \
   --network-alias "$ACTIVE_ALIAS" \
-  --env-file "$ENV_FILE" \
+  "${DOCKER_ENV_ARGS[@]}" \
   --mount "type=volume,source=${DATA_VOLUME},target=/data" \
   --restart "$RESTART_POLICY" \
   "$IMAGE" >/dev/null

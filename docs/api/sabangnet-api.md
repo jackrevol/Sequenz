@@ -31,7 +31,7 @@
 | `CLIENT_ID` | 앱 Client ID | 배포 시크릿 |
 | `SECRET_KEY` | bcrypt 형식 Secret Key | 배포 시크릿 |
 | `SVC_ACNT_ID` | 서비스 계정 ID | 배포 시크릿 |
-| `CLIENT_TYPE` | 앱 유형, 샘플 기준 `SB_APP` | 배포 시크릿 |
+| `CLIENT_TYPE` | 앱 유형, 코드 기본값 `SB_APP` | 코드 설정 |
 | `AUTH_MODE` | `SANDBOX` 또는 `PRODUCTION`. 생략 시 `PRODUCTION` | 환경 설정 |
 | `BEARER_TOKEN` | 선택. 직접 지정 시 토큰 발급 생략 | 로컬 테스트 전용 |
 
@@ -64,6 +64,15 @@
 - 변경 API는 HTTP/envelope 성공 외에 `successCount`, `failCount`, `results[].status`를 반드시 확인해야 한다.
 - 샌드박스는 존재하지 않는 주문번호와 잘못된 상태 코드에도 변경 성공을 반환했고, 주문·문의·카테고리·상품 재조회 결과도 바뀌지 않았다.
 - 따라서 샌드박스 변경 API는 인증, endpoint, 요청/응답 계약 smoke test에만 사용하고 실제 영속성·상태 전이 검증은 운영 전 별도 검증 환경에서 수행해야 한다.
+
+### 2.2 환경별 고정 주소
+
+| 모드 | API Base URL | OAuth Token URL |
+| --- | --- | --- |
+| `PRODUCTION` | `https://api.sabangnet.co.kr` | `https://api.sabangnet.co.kr/oauth2/token` |
+| `SANDBOX` | `https://sandbox.sabangnet.co.kr` | `https://sandbox.sabangnet.co.kr/oauth2/token` |
+
+애플리케이션은 `SABANGNET_AUTH_MODE`로 위 주소를 자동 선택한다. 운영 모드가 기본값이므로 운영 배포에서는 별도 설정이 필요 없다.
 
 ## 3. 사방넷 API 엔드포인트
 

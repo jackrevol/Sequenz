@@ -51,9 +51,7 @@ class SabangnetApiClient:
         urlopen=None,
     ):
         self.base_url = (base_url or settings.SABANGNET_API_BASE_URL).rstrip("/")
-        self.token_url = token_url or settings.SABANGNET_TOKEN_URL or (
-            f"{self.base_url}/oauth2/token" if self.base_url else ""
-        )
+        self.token_url = token_url or (f"{self.base_url}/oauth2/token" if self.base_url else "")
         self.client_id = client_id or settings.SABANGNET_CLIENT_ID
         self.client_secret = client_secret or settings.SABANGNET_CLIENT_SECRET
         self.client_type = client_type or settings.SABANGNET_CLIENT_TYPE
@@ -134,17 +132,15 @@ class SabangnetApiClient:
         raise SabangnetApiError("사방넷 요청 재시도에 실패했습니다.")
 
     def _validate_oauth_configuration(self):
+        if self.auth_mode not in {"PRODUCTION", "SANDBOX"}:
+            raise SabangnetApiError("SABANGNET_AUTH_MODE는 PRODUCTION 또는 SANDBOX여야 합니다.", code="CONFIG_AUTH_MODE")
         missing = []
-        if not self.token_url:
-            missing.append("SABANGNET_TOKEN_URL")
         if not self.client_id:
             missing.append("SABANGNET_CLIENT_ID")
         if not self.client_secret:
             missing.append("SABANGNET_CLIENT_SECRET")
         if missing:
             raise SabangnetApiError(f"사방넷 OAuth 환경변수가 설정되지 않았습니다: {', '.join(missing)}", code="CONFIG_OAUTH")
-        if self.auth_mode not in {"PRODUCTION", "SANDBOX"}:
-            raise SabangnetApiError("SABANGNET_AUTH_MODE는 PRODUCTION 또는 SANDBOX여야 합니다.", code="CONFIG_AUTH_MODE")
         if len(self.client_secret) != 29 or not self.client_secret.startswith(("$2a$", "$2b$", "$2y$")):
             raise SabangnetApiError("사방넷 Client Secret 형식이 올바르지 않습니다.", code="CONFIG_SECRET")
 
