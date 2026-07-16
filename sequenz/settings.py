@@ -1,6 +1,9 @@
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -67,12 +70,48 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "sequenz.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": Path(os.environ.get("DJANGO_DB_PATH", BASE_DIR / "db.sqlite3")),
+def database_config(environment=None):
+    environment = environment if environment is not None else os.environ
+    mysql_values = {
+        "DB_HOST": environment.get("DB_HOST", "").strip(),
+        "DB_PORT": environment.get("DB_PORT", "").strip(),
+        "DB_NAME": environment.get("DB_NAME", "").strip(),
+        "DB_USER": environment.get("DB_USER", "").strip(),
+        "DB_PASSWORD": environment.get("DB_PASSWORD", ""),
     }
-}
+    configured = {key for key, value in mysql_values.items() if value}
+    if not configured:
+        return {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": Path(environment.get("DJANGO_DB_PATH", BASE_DIR / "db.sqlite3")),
+        }
+
+    missing = [key for key, value in mysql_values.items() if not value]
+    if missing:
+        raise ImproperlyConfigured(f"Incomplete MySQL configuration: {', '.join(missing)}")
+
+    try:
+        port = int(mysql_values["DB_PORT"])
+    except ValueError as exc:
+        raise ImproperlyConfigured("DB_PORT must be an integer.") from exc
+
+    return {
+        "ENGINE": "django.db.backends.mysql",
+        "HOST": mysql_values["DB_HOST"],
+        "PORT": port,
+        "NAME": mysql_values["DB_NAME"],
+        "USER": mysql_values["DB_USER"],
+        "PASSWORD": mysql_values["DB_PASSWORD"],
+        "CONN_MAX_AGE": 60,
+        "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": {
+            "charset": "utf8mb4",
+            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
+    }
+
+
+DATABASES = {"default": database_config()}
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

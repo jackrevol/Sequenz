@@ -14,8 +14,11 @@ RUN groupadd --system sequenz \
     && useradd --system --gid sequenz --home-dir /app sequenz
 
 COPY requirements.txt ./
-RUN python -m pip install --upgrade pip \
-    && python -m pip install -r requirements.txt
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential default-libmysqlclient-dev pkg-config \
+    && python -m pip install --upgrade pip \
+    && python -m pip install -r requirements.txt \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 

@@ -52,9 +52,9 @@ proxy backed by the persistent media volume. The container health endpoint is
 
 ## EC2 deployment
 
-`update_sequenz.sh` pulls the ECR image and performs a blue/green deployment. All
-startup configuration has code defaults. Optional integration credentials
-are loaded from AWS Systems Manager Parameter Store under `/sequenz/prod`.
+`update_sequenz.sh` pulls the ECR image and performs a blue/green deployment.
+MySQL connection values and optional integration credentials are loaded from AWS
+Systems Manager Parameter Store under `/sequenz/prod`.
 Configure the Nginx Proxy Manager Proxy Host as follows:
 
 ```text
@@ -68,9 +68,30 @@ Deploy the latest image pushed from `main`:
 ./update_sequenz.sh
 ```
 
-Parameter names use `/sequenz/{prod|dev}/{keyname}`. No parameter is required
-merely to start the server. Add the following sets only when each integration is
-enabled:
+Parameter names use `/sequenz/{prod|dev}/{keyname}`. MySQL connection values are
+required for a normal deployment; external integration values remain optional:
+
+| Database | Key name | Type | Notes |
+| --- | --- | --- | --- |
+| MySQL | `DB_HOST` | `SecureString` | Existing MySQL server hostname or private IP |
+| MySQL | `DB_PORT` | `SecureString` | Usually `3306` |
+| MySQL | `DB_NAME` | `SecureString` | Pre-created empty database name |
+| MySQL | `DB_USER` | `SecureString` | User with schema and application DML privileges |
+| MySQL | `DB_PASSWORD` | `SecureString` | Database password |
+
+For example, production uses:
+
+```text
+/sequenz/prod/DB_HOST
+/sequenz/prod/DB_PORT
+/sequenz/prod/DB_NAME
+/sequenz/prod/DB_USER
+/sequenz/prod/DB_PASSWORD
+```
+
+The database itself and user grants must exist before deployment. The container
+entrypoint runs Django migrations and creates the application tables in the empty
+database. Add the following sets only when each integration is enabled:
 
 | Integration | Key name | Type | Required when |
 | --- | --- | --- | --- |
@@ -113,10 +134,10 @@ internal status values are `pending`, `preparing`, `ready_to_ship`, `shipped`,
 All parameters under these paths must use `SecureString`; the deployment script
 warns and ignores `String` and `StringList` parameters. The EC2 role should allow
 `ssm:GetParametersByPath` and, for a customer-managed KMS key, `kms:Decrypt`.
-Missing parameters, empty values, access denial, and lookup failures only produce
-a warning; deployment continues with empty integration credentials. Storefront
-pages and `/healthz/` therefore remain available. Use a different path or disable
-the lookup explicitly when needed:
+Missing optional integration parameters only leave those integrations disabled.
+Missing MySQL parameters or a Parameter Store lookup failure stops a normal
+deployment to prevent accidental writes to SQLite. Use `--skip-ssm` only for an
+explicit emergency SQLite deployment:
 
 ```bash
 ./update_sequenz.sh -d

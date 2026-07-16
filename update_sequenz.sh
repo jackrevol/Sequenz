@@ -37,7 +37,7 @@ Usage: ./update_sequenz.sh [options]
 Options:
   -d, --dev              Deploy isolated dev containers using /sequenz/dev
   --tag TAG              Deploy a specific ECR image tag (default: latest)
-  --skip-ssm             Skip Parameter Store lookup
+  --skip-ssm             Skip Parameter Store and use emergency SQLite
   --skip-ecr-login       Skip ECR docker login before pulling the image
   -h, --help             Show this help
 
@@ -216,14 +216,14 @@ prepare_parameter_store_environment() {
   SSM_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/sequenz-ssm-env.XXXXXX")"
   chmod 600 "$SSM_RAW_FILE" "$SSM_ENV_FILE"
 
-  log "Loading optional configuration from Parameter Store: $SSM_PARAMETER_PATH"
+  log "Loading configuration from Parameter Store: $SSM_PARAMETER_PATH"
   if ! aws ssm get-parameters-by-path \
     --path "$SSM_PARAMETER_PATH" \
     --with-decryption \
     --region "$AWS_REGION" \
     --query 'Parameters[].[Name,Type,Value]' \
     --output text > "$SSM_RAW_FILE" 2>/dev/null; then
-    log "WARNING: Parameter Store lookup failed; continuing with baked-in defaults."
+    log "WARNING: Parameter Store lookup failed."
     return 0
   fi
 
@@ -247,12 +247,33 @@ prepare_parameter_store_environment() {
   done < "$SSM_RAW_FILE"
 
   if [[ "$parameter_count" -eq 0 ]]; then
-    log "No usable Parameter Store values found; continuing with baked-in defaults."
+    log "No usable Parameter Store values found."
     return 0
   fi
 
   DOCKER_ENV_ARGS=(--env-file "$SSM_ENV_FILE")
-  log "Loaded ${parameter_count} optional Parameter Store value(s)."
+  log "Loaded ${parameter_count} Parameter Store value(s)."
+}
+
+validate_database_parameters() {
+  local key
+  local missing=()
+  local required=(DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD)
+
+  if [[ "$SKIP_SSM" == "true" ]]; then
+    log "WARNING: MySQL configuration skipped; using the emergency SQLite volume."
+    return 0
+  fi
+
+  for key in "${required[@]}"; do
+    if [[ -z "$SSM_ENV_FILE" ]] || ! grep -Eq "^${key}=.+$" "$SSM_ENV_FILE"; then
+      missing+=("$key")
+    fi
+  done
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    die "Required MySQL SecureString parameter(s) missing under ${SSM_PARAMETER_PATH}: ${missing[*]}"
+  fi
 }
 
 wait_for_health() {
@@ -319,6 +340,7 @@ else
 fi
 
 prepare_parameter_store_environment
+validate_database_parameters
 
 CURRENT="$(current_slot || true)"
 if [[ -z "$CURRENT" ]]; then
