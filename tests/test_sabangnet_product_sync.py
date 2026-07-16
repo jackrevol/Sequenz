@@ -3,7 +3,7 @@ from copy import deepcopy
 from unittest.mock import patch
 from django.core.management import call_command
 
-from catalog.models import Category, Product, ProductImage, ProductListing, ProductSyncSnapshot
+from catalog.models import Category, Product, ProductImage, ProductListing, ProductListingVariant, ProductSyncSnapshot
 from integrations.models import ExternalApiLog, IntegrationJob, OperationsAuditLog
 from integrations.sabangnet_products import SabangnetProductError
 from integrations.sabangnet_products import sync_product
@@ -60,22 +60,20 @@ def test_sabangnet_product_sync_creates_product_options_images_and_snapshot():
     assert len(images) == 2
     assert images[0].is_primary is True
     assert images[0].image_url == "https://example.com/sync-main.jpg"
+    listing = product.listings.get()
+    assert listing.status == ProductListing.Status.DRAFT
+    assert listing.display_name == product.name
+    assert listing.selling_price_snapshot == product.selling_price
+    assert listing.variants.get().status == ProductListingVariant.Status.DRAFT
     assert ProductSyncSnapshot.objects.get(product=product).status == ProductSyncSnapshot.Status.CREATED
 
 
 @pytest.mark.django_db
 def test_resync_updates_sabangnet_listing_price_options_and_images():
     product = sync_product(PRODUCT_PAYLOAD)
-    listing = ProductListing.objects.create(
-        product=product,
-        listing_code="SYNC-LISTING",
-        status="active",
-        display_name="Synced Jacket",
-        slug="synced-jacket",
-        consumer_price_snapshot=129000,
-        selling_price_snapshot=99000,
-        price_source="sabangnet",
-    )
+    listing = product.listings.get()
+    listing.status = ProductListing.Status.ACTIVE
+    listing.save(update_fields=["status", "updated_at"])
     changed = {
         **PRODUCT_PAYLOAD,
         "sellingPrice": 89000,
@@ -91,6 +89,58 @@ def test_resync_updates_sabangnet_listing_price_options_and_images():
     assert listing.variants.get().status == "sold_out"
     assert list(synced.images.values_list("image_url", flat=True)) == ["https://example.com/new-main.jpg"]
     assert ProductSyncSnapshot.objects.filter(product=synced, status=ProductSyncSnapshot.Status.UPDATED).exists()
+
+
+@pytest.mark.django_db
+def test_product_without_options_gets_safe_draft_default_option():
+    payload = {**PRODUCT_PAYLOAD, "productCode": "SB-NO-OPTION", "customProductCode": "NO-OPTION"}
+    payload.pop("optionInfo")
+
+    product = sync_product(payload)
+
+    variant = product.variants.get()
+    listing = product.listings.get()
+    assert variant.option_display_name == "기본 옵션"
+    assert variant.stock_quantity == 0
+    assert listing.status == ProductListing.Status.DRAFT
+    assert listing.variants.get().status == ProductListingVariant.Status.DRAFT
+
+
+@pytest.mark.django_db
+def test_admin_can_bulk_activate_reviewed_draft_listings(client, django_user_model):
+    admin = django_user_model.objects.create_superuser("listing-admin", "listing@example.com", "password")
+    client.force_login(admin)
+    product = sync_product(PRODUCT_PAYLOAD)
+    listing = product.listings.get()
+
+    response = client.post(
+        "/admin/catalog/productlisting/",
+        {"action": "activate_selected_listings", "_selected_action": [listing.pk]},
+        follow=True,
+    )
+
+    listing.refresh_from_db()
+    assert response.status_code == 200
+    assert listing.status == ProductListing.Status.ACTIVE
+    assert listing.variants.get().status == ProductListingVariant.Status.ACTIVE
+
+
+@pytest.mark.django_db
+def test_admin_does_not_activate_zero_price_draft_listing(client, django_user_model):
+    admin = django_user_model.objects.create_superuser("safe-listing-admin", "safe-listing@example.com", "password")
+    client.force_login(admin)
+    product = sync_product({**PRODUCT_PAYLOAD, "productCode": "SB-ZERO", "customProductCode": "ZERO", "sellingPrice": 0})
+    listing = product.listings.get()
+
+    response = client.post(
+        "/admin/catalog/productlisting/",
+        {"action": "activate_selected_listings", "_selected_action": [listing.pk]},
+        follow=True,
+    )
+
+    listing.refresh_from_db()
+    assert listing.status == ProductListing.Status.DRAFT
+    assert "판매가가 0원인 상품" in response.content.decode()
 
 
 @pytest.mark.django_db

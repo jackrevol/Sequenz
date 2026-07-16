@@ -1,12 +1,15 @@
 import re
 
+from django import forms
 from django.conf import settings
 from django.contrib import admin, messages
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import IntegrityError
 from django.shortcuts import redirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 
+from .listings import ListingActivationError, activate_draft_listing
 from .models import Brand, Category, Product, ProductAttribute, ProductImage, ProductInformationNotice, ProductListing, ProductListingVariant, ProductSyncSnapshot, ProductVariant, SearchKeyword
 from integrations.sabangnet_product_jobs import enqueue_manual_product_sync
 
@@ -137,15 +140,68 @@ class ProductListingVariantInline(admin.TabularInline):
     autocomplete_fields = ("variant",)
 
 
+class ProductListingAdminForm(forms.ModelForm):
+    class Meta:
+        model = ProductListing
+        fields = "__all__"
+
+    def clean_status(self):
+        status = self.cleaned_data["status"]
+        if status != ProductListing.Status.ACTIVE:
+            return status
+        previous_status = None
+        if self.instance.pk:
+            previous_status = ProductListing.objects.filter(pk=self.instance.pk).values_list(
+                "status", flat=True
+            ).first()
+        if previous_status in {None, ProductListing.Status.DRAFT}:
+            raise ValidationError(
+                "작성 중 상품은 목록에서 선택한 뒤 ‘판매 중으로 전환’ 작업을 사용해 주세요. "
+                "옵션 상태와 중복 여부를 함께 검사합니다."
+            )
+        return status
+
+
 @admin.register(ProductListing)
 class ProductListingAdmin(admin.ModelAdmin):
+    form = ProductListingAdminForm
     list_display = ("display_name", "listing_code", "status", "selling_price_snapshot", "is_featured", "sort_order", "updated_at")
     list_filter = ("status", "is_featured", "is_new_label", "is_sale_label", "sales_channel")
-    list_editable = ("status", "is_featured", "sort_order")
+    list_editable = ("is_featured", "sort_order")
     search_fields = ("display_name", "listing_code", "slug", "search_keywords")
     prepopulated_fields = {"slug": ("display_name",)}
     autocomplete_fields = ("product",)
     inlines = (ProductListingVariantInline,)
+    actions = ("activate_selected_listings",)
+
+    @admin.action(permissions=["change"], description="선택한 작성 중 상품을 판매 중으로 전환")
+    def activate_selected_listings(self, request, queryset):
+        activated = 0
+        failures = []
+        for listing_id in queryset.values_list("pk", flat=True):
+            try:
+                listing = activate_draft_listing(listing_id)
+            except ListingActivationError as exc:
+                failures.append(str(exc))
+            except IntegrityError:
+                failures.append("중복된 판매 상품 또는 URL이 있어 전환하지 못했습니다.")
+            else:
+                activated += 1
+                self.log_change(request, listing, "관리자 일괄 작업으로 판매 중 전환")
+
+        if activated:
+            self.message_user(
+                request,
+                f"검토를 마친 판매 상품 {activated}건을 판매 중으로 전환했습니다.",
+                level=messages.SUCCESS,
+            )
+        if failures:
+            reasons = "; ".join(dict.fromkeys(failures))
+            self.message_user(
+                request,
+                f"{len(failures)}건은 전환하지 못했습니다: {reasons}",
+                level=messages.WARNING,
+            )
 
 
 @admin.register(ProductVariant)

@@ -277,6 +277,7 @@ class ProductListing(models.Model):
 
 class ProductListingVariant(models.Model):
     class Status(models.TextChoices):
+        DRAFT = "draft", "작성 중"
         ACTIVE = "active", "판매 중"
         HIDDEN = "hidden", "숨김"
         SOLD_OUT = "sold_out", "품절"

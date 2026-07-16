@@ -4,7 +4,8 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
-from catalog.models import Brand, Category, Product, ProductAttribute, ProductImage, ProductInformationNotice, ProductListingVariant, ProductSyncSnapshot, ProductVariant
+from catalog.listings import sync_sabangnet_listings
+from catalog.models import Brand, Category, Product, ProductAttribute, ProductImage, ProductInformationNotice, ProductSyncSnapshot, ProductVariant
 from integrations.sabangnet_client import SabangnetApiClient, SabangnetApiError
 
 
@@ -167,6 +168,26 @@ def _sync_variants(product, payload):
     option_info = _value(payload, "optionInfo", default={}) or {}
     options = _value(option_info, "options", default=[]) or []
     synced = []
+    if not options:
+        existing = list(product.variants.order_by("pk"))
+        if existing:
+            return existing
+        product_supply_status = str(
+            _value(payload, "productSupplyStatusCode", "SUPPLY_STATUS", default="")
+        )
+        default_supply_status = "SALE" if product_supply_status in {"IN_SUPPLY", "SALE"} else (
+            product_supply_status or "SOLD_OUT"
+        )
+        return [
+            ProductVariant.objects.create(
+                product=product,
+                variant_code=f"SABANGNET-DEFAULT-{product.pk}",
+                option_display_name="기본 옵션",
+                stock_quantity=_integer(_value(payload, "stockQuantity", "stockQty")),
+                supply_status=default_supply_status,
+                synced_at=timezone.now(),
+            )
+        ]
     for index, option in enumerate(options):
         name = str(_value(option, "optionDisplayName", default="")).strip()
         if not name:
@@ -267,20 +288,7 @@ def _sync_information_notice(product, payload):
 
 
 def _sync_listings(product, variants):
-    for listing in product.listings.filter(price_source="sabangnet"):
-        listing.consumer_price_snapshot = product.consumer_price
-        listing.selling_price_snapshot = product.selling_price
-        listing.save(update_fields=["consumer_price_snapshot", "selling_price_snapshot", "updated_at"])
-        for index, variant in enumerate(variants):
-            ProductListingVariant.objects.update_or_create(
-                listing=listing,
-                variant=variant,
-                defaults={
-                    "status": ProductListingVariant.Status.ACTIVE if variant.stock_quantity > 0 and variant.supply_status == "SALE" else ProductListingVariant.Status.SOLD_OUT,
-                    "additional_amount_snapshot": variant.additional_amount,
-                    "sort_order": index,
-                },
-            )
+    sync_sabangnet_listings(product, variants)
 
 
 def _extract_product(payload):
