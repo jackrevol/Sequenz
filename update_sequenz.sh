@@ -310,6 +310,7 @@ deploy_worker() {
   docker run -d \
     --name "$next_worker" \
     --network "$NETWORK" \
+    --no-healthcheck \
     "${DOCKER_ENV_ARGS[@]+"${DOCKER_ENV_ARGS[@]}"}" \
     --mount "type=volume,source=${DATA_VOLUME},target=/data" \
     --restart "$RESTART_POLICY" \
