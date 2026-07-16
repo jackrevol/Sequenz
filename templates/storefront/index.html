@@ -20,14 +20,16 @@
   {% include "storefront/_sidebar.html" %}
 
   <main id="mainContent" class="storefront-main">
-    <section class="hero" id="heroBanner">
-      <div class="hero-copy">
-        <p class="eyebrow">CURATED EVERYDAY</p>
-        <h1 id="heroTitle">지금의 감각을<br>입는 방식.</h1>
-        <p id="heroSubtitle">선별된 브랜드와 매일 입고 싶은 옷을 만나보세요.</p>
-        <a href="#products" class="hero-link" id="heroLink">SHOP THE EDIT →</a>
-      </div>
-    </section>
+    <div class="hero-stack" id="heroBanners" aria-label="주요 배너">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">CURATED EVERYDAY</p>
+          <h1>지금의 감각을<br>입는 방식.</h1>
+          <p>선별된 브랜드와 매일 입고 싶은 옷을 만나보세요.</p>
+          <a href="#products" class="hero-link">SHOP THE EDIT →</a>
+        </div>
+      </section>
+    </div>
 
     <section class="filters" aria-label="상품 필터">
       <div id="brands" class="chips"></div>
@@ -67,7 +69,9 @@
   </nav>
   <div id="toast" class="toast" role="status"></div>
   <script src="https://js.tosspayments.com/v2/standard"></script>
+  <script src="https://t1.kakaocdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js" defer></script>
   <script src="{% static 'storefront/navigation.js' %}" defer></script>
+  <script src="{% static 'storefront/postcode.js' %}" defer></script>
   <script src="{% static 'storefront/store.js' %}" defer></script>
 </body>
 </html>

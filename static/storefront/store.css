@@ -16,6 +16,7 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .menu-trigger { justify-self:start; letter-spacing:.08em; }
 .cart-button span { display:inline-grid; place-items:center; background:var(--ink); color:#fff; border-radius:50%; min-width:18px; height:18px; }
 .storefront-main { width:100%; overflow:hidden; }
+.hero-stack { display:grid; }
 .hero { position:relative; isolation:isolate; min-height:470px; padding:78px 26px 42px; overflow:hidden; background:linear-gradient(145deg,#d7d2c7,#f5f3ee 52%,#c5beb0) center/cover no-repeat; display:flex; flex-direction:column; justify-content:flex-end; }
 .hero-video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
 .hero-copy { position:relative; z-index:1; }
@@ -129,6 +130,11 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .review-form,.inquiry-form { display:grid; gap:9px; margin-top:14px; }
 .address-editor { display:grid; grid-template-columns:repeat(2,1fr); gap:7px; padding:12px 0; border-bottom:1px solid var(--line); }
 .address-editor input { min-width:0; padding:9px; border:1px solid var(--line); }
+.postcode-fields { display:grid; grid-column:1/-1; gap:8px; }
+.postcode-search-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; }
+.postcode-search-button { min-width:104px; padding:0 16px; color:#fff; background:var(--ink); border:1px solid var(--ink); font-weight:700; cursor:pointer; }
+.postcode-fields input[readonly] { color:var(--ink); background:#f7f7f4; cursor:default; }
+.postcode-help { color:#666; font-size:11px; line-height:1.45; }
 .review-form input,.review-form textarea,.review-form select,.inquiry-form input,.inquiry-form textarea,.inquiry-form select { width:100%; padding:12px; border:1px solid var(--line); }
 .review-summary { margin:24px 0 10px; font-weight:700; }
 .review-card { padding:13px 0; border-top:1px solid var(--line); }

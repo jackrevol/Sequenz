@@ -36,23 +36,25 @@ async function loadBrands() {
   container.addEventListener('click', event => { if (!event.target.matches('.chip')) return; document.querySelectorAll('.chip').forEach(x => x.classList.remove('active')); event.target.classList.add('active'); state.brand = event.target.dataset.brand; loadProducts(); });
 }
 
+function bannerMarkup(banner) {
+  const media = banner.mobile_media_url || banner.media_url;
+  const hasMedia = Boolean(media);
+  const classes = `hero${hasMedia ? ' has-media' : ''}`;
+  const background = hasMedia && banner.media_type === 'image'
+    ? ` style="background-image:linear-gradient(rgba(0,0,0,.08),rgba(0,0,0,.32)),url('${h(safeUrl(media))}')"`
+    : '';
+  const video = hasMedia && banner.media_type === 'video'
+    ? `<video class="hero-video" autoplay muted loop playsinline ${banner.poster_url ? `poster="${h(safeUrl(banner.poster_url))}"` : ''}><source src="${h(safeUrl(media))}"></video>`
+    : '';
+  const href = banner.link_url ? safeUrl(banner.link_url) : '#products';
+
+  return `<section class="${classes}"${background}>${video}<div class="hero-copy"><p class="eyebrow">CURATED EVERYDAY</p><h1>${h(banner.title)}</h1><p>${h(banner.subtitle)}</p><a class="hero-link" href="${h(href)}">${h(banner.button_label || '자세히 보기')} →</a></div></section>`;
+}
+
 async function loadContent() {
   const [banners, collections, promotions, lookbooks] = await Promise.all([api('/api/content/banners/'), api('/api/content/collections/'), api('/api/content/promotions/'), api('/api/content/lookbooks/')]);
   if (banners.length) {
-    const banner = banners[0], hero = document.querySelector('#heroBanner');
-    document.querySelector('#heroTitle').textContent = banner.title;
-    document.querySelector('#heroSubtitle').textContent = banner.subtitle;
-    document.querySelector('#heroLink').textContent = `${banner.button_label || '자세히 보기'} →`;
-    document.querySelector('#heroLink').href = banner.link_url ? safeUrl(banner.link_url) : '#products';
-    const media = banner.mobile_media_url || banner.media_url;
-    if (media && banner.media_type === 'image') {
-      hero.classList.add('has-media');
-      hero.style.backgroundImage = `linear-gradient(rgba(0,0,0,.08),rgba(0,0,0,.32)),url("${safeUrl(media)}")`;
-    }
-    if (media && banner.media_type === 'video') {
-      hero.classList.add('has-media');
-      hero.innerHTML = `<video class="hero-video" autoplay muted loop playsinline ${banner.poster_url ? `poster="${h(safeUrl(banner.poster_url))}"` : ''}><source src="${h(safeUrl(media))}"></video><div class="hero-copy"><p class="eyebrow">CURATED EVERYDAY</p><h1>${h(banner.title)}</h1><p>${h(banner.subtitle)}</p><a class="hero-link" href="${h(banner.link_url ? safeUrl(banner.link_url) : '#products')}">${h(banner.button_label || '자세히 보기')} →</a></div>`;
-    }
+    document.querySelector('#heroBanners').innerHTML = banners.map(bannerMarkup).join('');
   }
   const sections = [
     ...promotions.map(item => ({ ...item, label:'PROMOTION', type:'promotions', image:item.hero_image_url })),
@@ -142,8 +144,8 @@ async function openCheckout(summary) {
   const addresses = member ? await api('/api/accounts/addresses/') : { results:[] };
   const memberBenefits = member ? await api('/api/benefits/mine/') : null;
   member = escapeData(member);
-  const address = escapeData(addresses.results?.[0] || {});
-  document.querySelector('#checkoutContent').innerHTML = `<h2>CHECKOUT</h2><form id="checkoutForm" class="checkout-form"><input name="buyer_name" required placeholder="주문자명" value="${member?.name || ''}"><input name="buyer_phone" required placeholder="주문자 연락처" value="${member?.phone || ''}"><input name="buyer_email" type="email" placeholder="이메일" value="${member?.email || ''}"><input name="recipient_name" required placeholder="수취인명" value="${address.recipient_name || ''}"><input name="recipient_phone" required placeholder="수취인 연락처" value="${address.recipient_phone || ''}"><input name="postal_code" required placeholder="우편번호" value="${address.postal_code || ''}"><input name="address1" required placeholder="기본주소" value="${address.address1 || ''}"><input name="address2" placeholder="상세주소" value="${address.address2 || ''}"><input name="delivery_memo" placeholder="배송 메모" value="${address.delivery_memo || ''}">${member ? '<label class="checkbox-row"><input type="checkbox" name="save_address"> 이 배송지를 기본 배송지로 저장</label>' : ''}<fieldset class="payment-methods"><legend>결제수단</legend><div class="payment-grid"><label class="payment-option"><input type="radio" name="payment_method" value="CARD" checked><span>신용·체크카드</span></label><label class="payment-option"><input type="radio" name="payment_method" value="NAVERPAY"><span>네이버페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="KAKAOPAY"><span>카카오페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="TOSSPAY"><span>토스페이</span></label></div></fieldset><div class="checkout-total"><span>결제 예정 금액</span><span id="checkoutPaymentAmount">${won(summary.payment_amount)}</span></div><button class="primary-button"><span id="checkoutButtonAmount">${won(summary.payment_amount)}</span> 결제하기</button></form>`;
+  const address = addresses.results?.[0] || {};
+  document.querySelector('#checkoutContent').innerHTML = `<h2>CHECKOUT</h2><form id="checkoutForm" class="checkout-form"><input name="buyer_name" required placeholder="주문자명" value="${member?.name || ''}"><input name="buyer_phone" required placeholder="주문자 연락처" value="${member?.phone || ''}"><input name="buyer_email" type="email" placeholder="이메일" value="${member?.email || ''}"><input name="recipient_name" required placeholder="수취인명" value="${h(address.recipient_name || '')}"><input name="recipient_phone" required placeholder="수취인 연락처" value="${h(address.recipient_phone || '')}">${SequenzPostcode.fields(address)}<input name="delivery_memo" placeholder="배송 메모" value="${h(address.delivery_memo || '')}">${member ? '<label class="checkbox-row"><input type="checkbox" name="save_address"> 이 배송지를 기본 배송지로 저장</label>' : ''}<fieldset class="payment-methods"><legend>결제수단</legend><div class="payment-grid"><label class="payment-option"><input type="radio" name="payment_method" value="CARD" checked><span>신용·체크카드</span></label><label class="payment-option"><input type="radio" name="payment_method" value="NAVERPAY"><span>네이버페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="KAKAOPAY"><span>카카오페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="TOSSPAY"><span>토스페이</span></label></div></fieldset><div class="checkout-total"><span>결제 예정 금액</span><span id="checkoutPaymentAmount">${won(summary.payment_amount)}</span></div><button class="primary-button"><span id="checkoutButtonAmount">${won(summary.payment_amount)}</span> 결제하기</button></form>`;
   if (memberBenefits) {
     const benefitFields = document.createElement('div'); benefitFields.className = 'benefit-fields';
     benefitFields.innerHTML = `<label>쿠폰<select name="coupon_code"><option value="">사용 안 함</option>${memberBenefits.coupons.filter(item => item.status === 'available').map(item => `<option value="${h(item.coupon.code)}">${h(item.coupon.name)}</option>`).join('')}</select></label><label>적립금 사용 <small>보유 ${Number(memberBenefits.account.point_balance).toLocaleString('ko-KR')}P</small><input type="number" name="point_to_use" min="0" max="${Number(memberBenefits.account.point_balance)}" value="0"></label>`;
@@ -222,7 +224,7 @@ function showReviewForm(orderItemId) {
 }
 
 function addressEditor(address) {
-  return `<form class="address-editor" data-address-form="${Number(address.id)}"><input name="label" value="${h(address.label)}"><input name="recipient_name" value="${h(address.recipient_name)}"><input name="recipient_phone" value="${h(address.recipient_phone)}"><input name="postal_code" value="${h(address.postal_code)}"><input name="address1" value="${h(address.address1)}"><input name="address2" value="${h(address.address2)}"><input name="delivery_memo" value="${h(address.delivery_memo)}"><label class="checkbox-row"><input name="is_default" type="checkbox" ${address.is_default ? 'checked' : ''}> 기본 배송지</label><button class="text-button">수정</button><button type="button" class="text-button" data-address-delete="${Number(address.id)}">삭제</button></form>`;
+  return `<form class="address-editor" data-address-form="${Number(address.id)}"><input name="label" value="${h(address.label)}"><input name="recipient_name" value="${h(address.recipient_name)}"><input name="recipient_phone" value="${h(address.recipient_phone)}">${SequenzPostcode.fields(address)}<input name="delivery_memo" value="${h(address.delivery_memo)}"><label class="checkbox-row"><input name="is_default" type="checkbox" ${address.is_default ? 'checked' : ''}> 기본 배송지</label><button class="text-button">수정</button><button type="button" class="text-button" data-address-delete="${Number(address.id)}">삭제</button></form>`;
 }
 
 function authTabs(active) {

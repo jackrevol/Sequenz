@@ -56,12 +56,15 @@ def test_storefront_has_isolated_responsive_layout(client):
 
     assert b'class="storefront-page"' in response.content
     assert b'class="storefront-main"' in response.content
+    assert b'id="heroBanners"' in response.content
     stylesheet = (settings.BASE_DIR / "static/storefront/store.css").read_text()
     script = (settings.BASE_DIR / "static/storefront/store.js").read_text()
     assert ".hero.has-media" in stylesheet
+    assert ".hero-stack" in stylesheet
     assert "background-size:cover" in stylesheet
     assert "globalThis.crypto?.randomUUID" in script
-    assert "hero.classList.add('has-media')" in script
+    assert "banners.map(bannerMarkup).join('')" in script
+    assert "banners[0]" not in script
 
 
 @pytest.mark.django_db
