@@ -1,9 +1,11 @@
 from unittest.mock import patch
+from pathlib import Path
 
 import pytest
 from django.utils import timezone
 
 from commerce.models import Order, Payment
+from catalog.models import Product, ProductListing
 from integrations.models import OperationsAuditLog, SabangnetOrderExport
 from benefits.models import ShippingPolicy
 
@@ -51,6 +53,19 @@ def test_django_admin_uses_sequenz_korean_branding(client, django_user_model):
     assert "관리자 센터" in content
     assert "운영 현황 바로가기" in content
     assert "상품 관리" in content
+    assert Product._meta.verbose_name == "상품"
+    assert ProductListing._meta.verbose_name == "판매 상품"
+    assert Product._meta.get_field("selling_price").verbose_name == "판매가"
+    assert dict(ProductListing._meta.get_field("status").choices)["active"] == "판매 중"
+
+
+def test_admin_theme_forces_readable_light_palette():
+    css = Path("static/admin/sequenz-admin.css").read_text()
+
+    assert 'html[data-theme="dark"]' in css
+    assert "--body-fg:#252822" in css
+    assert "--body-bg:#f5f5f1" in css
+    assert ".theme-toggle{display:none!important}" in css
 
 
 @pytest.mark.django_db

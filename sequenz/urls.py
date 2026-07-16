@@ -4,11 +4,13 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from .health import healthz
+from .admin_localization import apply_admin_localization
 
 
 admin.site.site_header = "SEQUENZ 관리자 센터"
 admin.site.site_title = "SEQUENZ 관리"
 admin.site.index_title = "사이트 운영 관리"
+apply_admin_localization()
 
 
 urlpatterns = [
