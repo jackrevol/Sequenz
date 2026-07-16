@@ -54,7 +54,7 @@ proxy backed by the persistent media volume. The container health endpoint is
 
 `update_sequenz.sh` pulls the ECR image and performs a blue/green deployment. All
 startup configuration has code defaults. Optional integration credentials
-are loaded from AWS Systems Manager Parameter Store under `/sequenz/production`.
+are loaded from AWS Systems Manager Parameter Store under `/sequenz/prod`.
 Configure the Nginx Proxy Manager Proxy Host as follows:
 
 ```text
@@ -68,17 +68,50 @@ Deploy the latest image pushed from `main`:
 ./update_sequenz.sh
 ```
 
-Parameter names must end with the Django environment variable name:
+Parameter names use `/sequenz/{prod|dev}/{keyname}`. No parameter is required
+merely to start the server. Add the following sets only when each integration is
+enabled:
+
+| Integration | Key name | Type | Required when |
+| --- | --- | --- | --- |
+| Toss Payments | `TOSS_CLIENT_KEY` | `SecureString` | Opening the payment widget |
+| Toss Payments | `TOSS_SECRET_KEY` | `SecureString` | Confirming, looking up, or cancelling payments |
+| Sabangnet | `SABANGNET_CLIENT_ID` | `SecureString` | Using Sabangnet OAuth/API |
+| Sabangnet | `SABANGNET_CLIENT_SECRET` | `SecureString` | Using Sabangnet OAuth/API |
+| Sabangnet | `SABANGNET_SVC_ACCOUNT_ID` | `SecureString` | Calling Sabangnet business APIs |
+| Sabangnet | `SABANGNET_AUTH_MODE` | `SecureString` | Set to `SANDBOX` under `dev`; `prod` defaults to `PRODUCTION` |
+| Sabangnet status sync | `SABANGNET_ORDER_STATUS_MAP` | `SecureString` (JSON object) | Mapping external statuses to internal statuses |
+| Sabangnet shipment sync | `SABANGNET_ORDER_SHIPMENT_RESPONSE_ITEMS` | `SecureString` (JSON array) | Requesting tracking/carrier fields enabled for the account |
+
+For example, a production Toss setup consists of:
 
 ```text
-/sequenz/production/TOSS_CLIENT_KEY
-/sequenz/production/TOSS_SECRET_KEY
-/sequenz/production/SABANGNET_CLIENT_ID
-/sequenz/production/SABANGNET_CLIENT_SECRET
-/sequenz/production/SABANGNET_SVC_ACCOUNT_ID
+/sequenz/prod/TOSS_CLIENT_KEY
+/sequenz/prod/TOSS_SECRET_KEY
 ```
 
-Use `SecureString` for credentials. The EC2 role should allow
+A development Sabangnet setup consists of:
+
+```text
+/sequenz/dev/SABANGNET_CLIENT_ID
+/sequenz/dev/SABANGNET_CLIENT_SECRET
+/sequenz/dev/SABANGNET_SVC_ACCOUNT_ID
+/sequenz/dev/SABANGNET_AUTH_MODE = SANDBOX
+```
+
+Optional Sabangnet synchronization value examples:
+
+```text
+/sequenz/prod/SABANGNET_ORDER_STATUS_MAP = {"external_status_code":"shipped"}
+/sequenz/prod/SABANGNET_ORDER_SHIPMENT_RESPONSE_ITEMS = ["WAYBILL_NO","LOGISTICS_CD","LOGISTICS_NM"]
+```
+
+Replace `external_status_code` only after confirming the real status code. Allowed
+internal status values are `pending`, `preparing`, `ready_to_ship`, `shipped`,
+`in_transit`, `delivered`, `cancelled`, and `returned`.
+
+All parameters under these paths must use `SecureString`; the deployment script
+warns and ignores `String` and `StringList` parameters. The EC2 role should allow
 `ssm:GetParametersByPath` and, for a customer-managed KMS key, `kms:Decrypt`.
 Missing parameters, empty values, access denial, and lookup failures only produce
 a warning; deployment continues with empty integration credentials. Storefront
@@ -86,9 +119,14 @@ pages and `/healthz/` therefore remain available. Use a different path or disabl
 the lookup explicitly when needed:
 
 ```bash
-SSM_PARAMETER_PATH=/sequenz/staging ./update_sequenz.sh
+./update_sequenz.sh -d
 ./update_sequenz.sh --skip-ssm
 ```
+
+`-d` (or `--dev`) selects `/sequenz/dev` and isolates the deployment as
+`sequenz-dev-blue/green`, `sequenz-dev-active`, and the `sequenz_dev_data` volume.
+It uses the same ECR image as production. Configure the development NPM Proxy Host
+to forward to `sequenz-dev-active:8000`.
 
 To deploy an immutable image created for a specific Git commit, pass its SHA tag:
 
@@ -125,13 +163,13 @@ If the production `DJANGO_ALLOWED_HOSTS` does not include `localhost`, set
 Store these credentials in Parameter Store when the connected Sabangnet account is approved:
 
 ```text
-/sequenz/production/SABANGNET_CLIENT_ID
-/sequenz/production/SABANGNET_CLIENT_SECRET
-/sequenz/production/SABANGNET_SVC_ACCOUNT_ID
+/sequenz/prod/SABANGNET_CLIENT_ID
+/sequenz/prod/SABANGNET_CLIENT_SECRET
+/sequenz/prod/SABANGNET_SVC_ACCOUNT_ID
 ```
 
 Production is the default. For a sandbox deployment, also set
-`/sequenz/staging/SABANGNET_AUTH_MODE` to `SANDBOX`.
+`/sequenz/dev/SABANGNET_AUTH_MODE` to `SANDBOX`.
 
 Synchronize recent order, delivery, and tracking data:
 

@@ -4,7 +4,7 @@ set -euo pipefail
 ECR_REGISTRY="${ECR_REGISTRY:-775145693936.dkr.ecr.ap-northeast-2.amazonaws.com}"
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-samsincr/squenz}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
-SSM_PARAMETER_PATH="${SSM_PARAMETER_PATH:-/sequenz/production}"
+SSM_PARAMETER_PATH="${SSM_PARAMETER_PATH:-}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 NETWORK="${NETWORK:-navi}"
 NPM_CONTAINER="${NPM_CONTAINER:-ec2-user-nginx-proxy-manager-1}"
@@ -17,10 +17,11 @@ HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-2}"
 GRACE_SECONDS="${GRACE_SECONDS:-10}"
 CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.10.1}"
 RESTART_POLICY="${RESTART_POLICY:-unless-stopped}"
-DATA_VOLUME="${DATA_VOLUME:-sequenz_data}"
+DATA_VOLUME="${DATA_VOLUME:-}"
 DEPLOY_WORKER="${DEPLOY_WORKER:-true}"
-PREFIX="${PREFIX:-sequenz}"
-LEGACY_CONTAINER="${LEGACY_CONTAINER:-sequenz}"
+PREFIX="${PREFIX:-}"
+LEGACY_CONTAINER="${LEGACY_CONTAINER:-}"
+MODE="prod"
 SKIP_ECR_LOGIN="false"
 SKIP_SSM="false"
 DEPLOYMENT_SWITCHED="false"
@@ -34,6 +35,7 @@ usage() {
 Usage: ./update_sequenz.sh [options]
 
 Options:
+  -d, --dev              Deploy isolated dev containers using /sequenz/dev
   --tag TAG              Deploy a specific ECR image tag (default: latest)
   --skip-ssm             Skip Parameter Store lookup
   --skip-ecr-login       Skip ECR docker login before pulling the image
@@ -43,7 +45,7 @@ Environment overrides:
   ECR_REGISTRY           ECR registry hostname
   IMAGE_REPOSITORY       ECR repository name (default: samsincr/squenz)
   AWS_REGION             AWS region for ECR login (default: ap-northeast-2)
-  SSM_PARAMETER_PATH     Parameter path (default: /sequenz/production)
+  SSM_PARAMETER_PATH     Parameter path (default: /sequenz/prod or /sequenz/dev)
   IMAGE_TAG              Image tag (default: latest)
   NETWORK                Docker network shared with NPM (default: navi)
   NPM_CONTAINER          Nginx Proxy Manager container name
@@ -59,12 +61,17 @@ Environment overrides:
   RESTART_POLICY         Docker restart policy (default: unless-stopped)
 
 NPM Proxy Host target:
-  sequenz-active:8000
+  prod: sequenz-active:8000
+  dev:  sequenz-dev-active:8000
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -d|--dev)
+      MODE="dev"
+      shift
+      ;;
     --tag)
       if [[ $# -lt 2 || -z "$2" ]]; then
         echo "--tag requires a value." >&2
@@ -92,6 +99,18 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$MODE" == "dev" ]]; then
+  SSM_PARAMETER_PATH="/sequenz/dev"
+  PREFIX="sequenz-dev"
+  DATA_VOLUME="sequenz_dev_data"
+  LEGACY_CONTAINER="sequenz-dev"
+else
+  SSM_PARAMETER_PATH="${SSM_PARAMETER_PATH:-/sequenz/prod}"
+  PREFIX="${PREFIX:-sequenz}"
+  DATA_VOLUME="${DATA_VOLUME:-sequenz_data}"
+  LEGACY_CONTAINER="${LEGACY_CONTAINER:-sequenz}"
+fi
 
 IMAGE="${ECR_REGISTRY}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 BLUE="${PREFIX}-blue"
@@ -178,6 +197,7 @@ ecr_login() {
 
 prepare_parameter_store_environment() {
   local parameter_name
+  local parameter_type
   local parameter_value
   local variable_name
   local parameter_count=0
@@ -201,16 +221,21 @@ prepare_parameter_store_environment() {
     --path "$SSM_PARAMETER_PATH" \
     --with-decryption \
     --region "$AWS_REGION" \
-    --query 'Parameters[].[Name,Value]' \
+    --query 'Parameters[].[Name,Type,Value]' \
     --output text > "$SSM_RAW_FILE" 2>/dev/null; then
     log "WARNING: Parameter Store lookup failed; continuing with baked-in defaults."
     return 0
   fi
 
-  while IFS=$'\t' read -r parameter_name parameter_value; do
+  while IFS=$'\t' read -r parameter_name parameter_type parameter_value; do
     [[ -n "$parameter_name" ]] || continue
     [[ -n "$parameter_value" && "$parameter_value" != "None" ]] || continue
     variable_name="${parameter_name##*/}"
+
+    if [[ "$parameter_type" != "SecureString" ]]; then
+      log "WARNING: Ignoring non-SecureString parameter: $parameter_name"
+      continue
+    fi
 
     if [[ ! "$variable_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
       log "WARNING: Ignoring invalid Parameter Store key: $parameter_name"
@@ -264,7 +289,7 @@ deploy_worker() {
   docker run -d \
     --name "$next_worker" \
     --network "$NETWORK" \
-    "${DOCKER_ENV_ARGS[@]}" \
+    "${DOCKER_ENV_ARGS[@]+"${DOCKER_ENV_ARGS[@]}"}" \
     --mount "type=volume,source=${DATA_VOLUME},target=/data" \
     --restart "$RESTART_POLICY" \
     "$IMAGE" \
@@ -309,6 +334,8 @@ else
 fi
 
 log "Image: $IMAGE"
+log "Mode: $MODE"
+log "Parameter Store path: $SSM_PARAMETER_PATH"
 log "Persistent volume: $DATA_VOLUME"
 log "Current slot: ${CURRENT:-none}"
 log "Next slot: $NEXT"
@@ -321,7 +348,7 @@ docker run -d \
   --name "$NEXT" \
   --network "$NETWORK" \
   --network-alias "$ACTIVE_ALIAS" \
-  "${DOCKER_ENV_ARGS[@]}" \
+  "${DOCKER_ENV_ARGS[@]+"${DOCKER_ENV_ARGS[@]}"}" \
   --mount "type=volume,source=${DATA_VOLUME},target=/data" \
   --restart "$RESTART_POLICY" \
   "$IMAGE" >/dev/null
