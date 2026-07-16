@@ -13,6 +13,9 @@ from integrations.models import ExternalApiLog, IntegrationJob, OperationsAuditL
 from integrations.sabangnet_products import SabangnetProductClient, sync_product_safely
 
 
+MAX_MANUAL_PRODUCT_SYNC_COUNT = 500
+
+
 @admin.register(Brand)
 class BrandAdmin(admin.ModelAdmin):
     list_display = ("name", "slug", "is_visible", "sort_order", "updated_at")
@@ -83,10 +86,11 @@ class ProductAdmin(admin.ModelAdmin):
             codes = self._sync_codes(request.POST.get("codes", ""), identifier_type, mode)
             if not codes:
                 self.message_user(request, "동기화할 상품코드가 없습니다.", level=messages.ERROR)
-            elif len(codes) > 100:
+            elif len(codes) > MAX_MANUAL_PRODUCT_SYNC_COUNT:
                 self.message_user(
                     request,
-                    f"한 번에 최대 100개까지 동기화할 수 있습니다. 현재 대상은 {len(codes)}개입니다.",
+                    f"한 번에 최대 {MAX_MANUAL_PRODUCT_SYNC_COUNT}개까지 동기화할 수 있습니다. "
+                    f"현재 대상은 {len(codes)}개입니다.",
                     level=messages.ERROR,
                 )
             else:
@@ -117,6 +121,7 @@ class ProductAdmin(admin.ModelAdmin):
                 ),
             },
             "existing_count": Product.objects.exclude(sabangnet_product_code="").count(),
+            "max_sync_count": MAX_MANUAL_PRODUCT_SYNC_COUNT,
         }
         return TemplateResponse(request, "admin/catalog/product/sabangnet_sync.html", context)
 
