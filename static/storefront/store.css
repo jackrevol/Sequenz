@@ -190,6 +190,12 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .pdp-information { padding:0 18px 80px; }
 .pdp-section { padding:44px 0; border-top:1px solid var(--line); }
 .pdp-section h2 { margin:7px 0 24px; font-size:21px; }
+.product-description { overflow:hidden; line-height:1.7; }
+.product-description img { display:block; width:auto; max-width:100%; height:auto; margin:0 auto; }
+.product-description figure { max-width:100%; margin:0; }
+.product-description table { display:block; max-width:100%; overflow:auto; border-collapse:collapse; }
+.product-description td,.product-description th { padding:8px; border:1px solid var(--line); }
+.product-description a { color:inherit; text-underline-offset:3px; }
 .pdp-review-head { display:flex; justify-content:space-between; align-items:baseline; }
 .pdp-review { padding:20px 0; }
 .review-images { display:flex; gap:8px; overflow:auto; margin:12px 0; }

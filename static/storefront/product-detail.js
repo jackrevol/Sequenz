@@ -8,7 +8,50 @@ const detailHeaders = {
 const detailWon = value => `${Number(value).toLocaleString('ko-KR')}원`;
 const detailEscape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
 const detailSafeUrl = value => { try { const url = new URL(value, location.origin); return ['http:','https:'].includes(url.protocol) ? url.href : '#'; } catch (_) { return '#'; } };
-const detailHtmlToText = value => new DOMParser().parseFromString(String(value || ''), 'text/html').body.textContent || '';
+const detailAllowedTags = new Set(['A','B','BLOCKQUOTE','BR','DIV','EM','FIGCAPTION','FIGURE','H1','H2','H3','H4','H5','H6','HR','I','IMG','LI','OL','P','SPAN','STRONG','TABLE','TBODY','TD','TH','THEAD','TR','U','UL']);
+const detailDroppedTags = new Set(['BUTTON','EMBED','FORM','IFRAME','INPUT','LINK','MATH','META','OBJECT','SCRIPT','STYLE','SVG','TEXTAREA']);
+
+function detailSanitizeHtml(value) {
+  const parsed = new DOMParser().parseFromString(String(value || ''), 'text/html');
+  const container = document.createElement('div');
+
+  const cleanNode = node => {
+    if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent || '');
+    if (node.nodeType !== Node.ELEMENT_NODE || detailDroppedTags.has(node.tagName)) return null;
+    if (!detailAllowedTags.has(node.tagName)) {
+      const fragment = document.createDocumentFragment();
+      [...node.childNodes].forEach(child => { const clean = cleanNode(child); if (clean) fragment.appendChild(clean); });
+      return fragment;
+    }
+
+    const element = document.createElement(node.tagName.toLowerCase());
+    if (node.tagName === 'IMG') {
+      const src = detailSafeUrl(node.getAttribute('src') || '');
+      if (src === '#') return null;
+      element.src = src;
+      element.alt = node.getAttribute('alt') || '';
+      element.loading = 'lazy';
+      element.decoding = 'async';
+    } else if (node.tagName === 'A') {
+      const href = detailSafeUrl(node.getAttribute('href') || '');
+      if (href !== '#') {
+        element.href = href;
+        element.target = '_blank';
+        element.rel = 'noopener noreferrer nofollow';
+      }
+    } else if (['TD','TH'].includes(node.tagName)) {
+      ['colspan','rowspan'].forEach(name => {
+        const value = Number.parseInt(node.getAttribute(name), 10);
+        if (Number.isInteger(value) && value > 0 && value <= 100) element.setAttribute(name, String(value));
+      });
+    }
+    [...node.childNodes].forEach(child => { const clean = cleanNode(child); if (clean) element.appendChild(clean); });
+    return element;
+  };
+
+  [...parsed.body.childNodes].forEach(node => { const clean = cleanNode(node); if (clean) container.appendChild(clean); });
+  return container.innerHTML;
+}
 
 async function detailApi(url, options = {}) {
   const response = await fetch(url, { ...options, headers:{ ...detailHeaders, ...(options.headers || {}) } });
@@ -57,7 +100,7 @@ async function loadProductPage() {
       </aside>
     </div>
     <section class="pdp-information">
-      <div class="pdp-section"><p class="eyebrow">PRODUCT STORY</p><h2>상품 상세</h2><div class="product-description">${detailEscape(detailHtmlToText(item.listing_detail_html || item.product.detail_html || item.listing_summary || ''))}</div></div>
+      <div class="pdp-section"><p class="eyebrow">PRODUCT STORY</p><h2>상품 상세</h2><div class="product-description">${detailSanitizeHtml(item.listing_detail_html || item.product.detail_html || item.listing_summary || '')}</div></div>
       ${attributes ? `<div class="pdp-section"><h2>상품 속성</h2><dl class="product-attributes">${attributes}</dl></div>` : ''}
       ${Object.keys(notice).length ? `<div class="pdp-section"><h2>상품정보제공고시</h2><dl class="product-attributes">${Object.entries(notice).map(([name,value]) => `<div><dt>${detailEscape(name)}</dt><dd>${detailEscape(value)}</dd></div>`).join('')}</dl></div>` : ''}
       <div class="pdp-section"><div class="pdp-review-head"><h2>리뷰</h2><strong>${Number(reviews.summary.count)} / ${Number(reviews.summary.average_rating).toFixed(1)}</strong></div>${reviewCards}</div>
