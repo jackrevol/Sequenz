@@ -6,6 +6,11 @@ from django.conf.urls.static import static
 from .health import healthz
 
 
+admin.site.site_header = "SEQUENZ 관리자 센터"
+admin.site.site_title = "SEQUENZ 관리"
+admin.site.index_title = "사이트 운영 관리"
+
+
 urlpatterns = [
     path("healthz/", healthz, name="healthz"),
     path("admin/", admin.site.urls),

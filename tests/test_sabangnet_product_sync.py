@@ -1,6 +1,10 @@
 import pytest
+from copy import deepcopy
+from unittest.mock import patch
 
 from catalog.models import Category, Product, ProductImage, ProductListing, ProductSyncSnapshot
+from integrations.models import ExternalApiLog, IntegrationJob, OperationsAuditLog
+from integrations.sabangnet_products import SabangnetProductError
 from integrations.sabangnet_products import sync_product
 
 
@@ -123,3 +127,58 @@ def test_sandbox_product_uses_deepest_my_category_and_excludes_service_account_f
 
     assert product.category == category
     assert "svcAcntId" not in product.raw_sabangnet_payload
+
+
+@pytest.mark.django_db
+def test_admin_can_manually_sync_multiple_sabangnet_products(client, django_user_model):
+    admin = django_user_model.objects.create_superuser("product-sync-admin", "sync@example.com", "password")
+    client.force_login(admin)
+
+    def fetch_product(**kwargs):
+        code = kwargs["product_code"]
+        payload = deepcopy(PRODUCT_PAYLOAD)
+        payload.update({"productCode": code, "customProductCode": f"CUSTOM-{code}"})
+        payload["optionInfo"]["options"][0].update({"variantCode": f"VARIANT-{code}", "barcode": f"BARCODE-{code}"})
+        return payload
+
+    with patch("catalog.admin.SabangnetProductClient.fetch_product", side_effect=fetch_product):
+        response = client.post(
+            "/admin/catalog/product/sabangnet-sync/",
+            {"identifier_type": "product_code", "mode": "codes", "codes": "SB-100\nSB-200"},
+        )
+
+    assert response.status_code == 302
+    assert set(Product.objects.values_list("sabangnet_product_code", flat=True)) == {"SB-100", "SB-200"}
+    job = IntegrationJob.objects.get(job_type="manual_product_sync")
+    assert job.status == IntegrationJob.Status.SUCCEEDED
+    assert job.success_count == 2
+    assert job.failure_count == 0
+    assert OperationsAuditLog.objects.get().action == "sabangnet_product_manual_sync"
+
+
+@pytest.mark.django_db
+def test_admin_manual_product_sync_keeps_successes_and_logs_failures(client, django_user_model):
+    admin = django_user_model.objects.create_superuser("partial-sync-admin", "partial@example.com", "password")
+    client.force_login(admin)
+
+    def fetch_product(**kwargs):
+        code = kwargs["product_code"]
+        if code == "SB-BAD":
+            raise SabangnetProductError("상품을 찾을 수 없습니다.")
+        return {**PRODUCT_PAYLOAD, "productCode": code, "customProductCode": f"CUSTOM-{code}"}
+
+    with patch("catalog.admin.SabangnetProductClient.fetch_product", side_effect=fetch_product):
+        response = client.post(
+            "/admin/catalog/product/sabangnet-sync/",
+            {"identifier_type": "product_code", "mode": "codes", "codes": "SB-GOOD, SB-BAD"},
+        )
+
+    assert response.status_code == 302
+    assert Product.objects.filter(sabangnet_product_code="SB-GOOD").exists()
+    job = IntegrationJob.objects.get(job_type="manual_product_sync")
+    assert job.status == IntegrationJob.Status.PARTIAL
+    assert job.success_count == 1
+    assert job.failure_count == 1
+    error = ExternalApiLog.objects.get(job=job)
+    assert error.request_summary["product_identifier"] == "SB-BAD"
+    assert "찾을 수 없습니다" in error.error_message

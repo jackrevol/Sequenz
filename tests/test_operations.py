@@ -24,6 +24,36 @@ def operations_order(db):
 
 
 @pytest.mark.django_db
+def test_operations_page_uses_korean_admin_interface(client, django_user_model):
+    admin = django_user_model.objects.create_superuser("page-admin", "page@example.com", "password")
+    client.force_login(admin)
+
+    response = client.get("/operations/")
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "운영 현황" in content
+    assert "주문 · 배송" in content
+    assert "배송비 관리" in content
+    assert "/static/operations/dashboard.css" in content
+
+
+@pytest.mark.django_db
+def test_django_admin_uses_sequenz_korean_branding(client, django_user_model):
+    admin = django_user_model.objects.create_superuser("brand-admin", "brand@example.com", "password")
+    client.force_login(admin)
+
+    response = client.get("/admin/")
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "SEQUENZ" in content
+    assert "관리자 센터" in content
+    assert "운영 현황 바로가기" in content
+    assert "상품 관리" in content
+
+
+@pytest.mark.django_db
 def test_operations_dashboard_requires_staff_and_returns_metrics(api_client, django_user_model, operations_order):
     user = django_user_model.objects.create_user("normal", password="password")
     api_client.force_login(user)

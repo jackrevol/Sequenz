@@ -1,0 +1,14 @@
+{% extends "admin/base.html" %}
+{% load static i18n %}
+
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | SEQUENZ 관리자{% endblock %}
+
+{% block extrastyle %}{{ block.super }}<link rel="stylesheet" href="{% static 'admin/sequenz-admin.css' %}">{% endblock %}
+
+{% block branding %}
+<div id="site-name">
+  <a href="{% url 'admin:index' %}"><span class="admin-brand-mark">S</span><span>SEQUENZ<small>관리자 센터</small></span></a>
+</div>
+{% endblock %}
+
+{% block nav-global %}<a class="operations-link" href="/operations/">운영 현황 바로가기 →</a>{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">홈</a> &rsaquo;
+  <a href="{% url 'admin:app_list' app_label=opts.app_label %}">상품 관리</a> &rsaquo;
+  <a href="{% url 'admin:catalog_product_changelist' %}">상품</a> &rsaquo; 사방넷 상품 가져오기
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="sync-page">
+  <div class="sync-intro">
+    <span class="sync-eyebrow">SABANGNET PRODUCT SYNC</span>
+    <h1>사방넷 상품 가져오기</h1>
+    <p>사방넷의 상품 정보와 옵션, 재고, 이미지, 가격을 관리자 상품 목록에 반영합니다.</p>
+  </div>
+
+  <div class="sync-status-grid">
+    <div class="sync-status-card"><span>API 주소</span><strong class="{% if configured.base_url %}ready{% else %}not-ready{% endif %}">{% if configured.base_url %}설정됨{% else %}설정 필요{% endif %}</strong></div>
+    <div class="sync-status-card"><span>인증 정보</span><strong class="{% if configured.authentication %}ready{% else %}not-ready{% endif %}">{% if configured.authentication %}설정됨{% else %}설정 필요{% endif %}</strong></div>
+    <div class="sync-status-card"><span>서비스 계정</span><strong class="{% if configured.service_account %}ready{% else %}not-ready{% endif %}">{% if configured.service_account %}설정됨{% else %}설정 필요{% endif %}</strong></div>
+  </div>
+
+  <form method="post" class="sync-form" id="syncForm">
+    {% csrf_token %}
+    <fieldset>
+      <legend>1. 상품 식별 방식</legend>
+      <div class="sync-radio-row">
+        <label><input type="radio" name="identifier_type" value="product_code" checked><span><b>사방넷 상품코드</b><small>사방넷 상품관리에서 확인하는 상품코드</small></span></label>
+        <label><input type="radio" name="identifier_type" value="custom_product_code"><span><b>자체상품코드</b><small>직접 등록한 내부 관리용 상품코드</small></span></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>2. 가져올 상품 선택</legend>
+      <div class="sync-mode-tabs">
+        <label><input type="radio" name="mode" value="codes" checked><span>상품코드 직접 입력</span></label>
+        <label><input type="radio" name="mode" value="existing"><span>등록 상품 전체 갱신 <em>{{ existing_count }}개</em></span></label>
+      </div>
+      <div class="code-input-area" id="codeInputArea">
+        <label for="id_codes">상품코드</label>
+        <textarea name="codes" id="id_codes" rows="9" placeholder="상품코드를 한 줄에 하나씩 입력하세요.&#10;예)&#10;P00001234&#10;P00001235"></textarea>
+        <p>쉼표 또는 줄바꿈으로 여러 코드를 입력할 수 있으며 한 번에 최대 100개까지 처리합니다.</p>
+      </div>
+      <div class="existing-sync-notice" id="existingSyncNotice" hidden>
+        <strong>현재 등록된 상품 {{ existing_count }}개의 최신 정보를 다시 가져옵니다.</strong>
+        <p>사방넷에만 있고 아직 이 관리자에 등록되지 않은 상품은 상품코드를 직접 입력해야 합니다.</p>
+      </div>
+    </fieldset>
+
+    <div class="sync-caution"><strong>가져오는 항목</strong><span>상품명 · 가격 · 브랜드 · 카테고리 · 옵션/재고 · 이미지 · 상세정보</span></div>
+    <div class="sync-actions">
+      <a href="{% url 'admin:catalog_product_changelist' %}" class="button">취소</a>
+      <button type="submit" class="button default" id="syncButton">사방넷에서 가져오기</button>
+    </div>
+  </form>
+</div>
+<script>
+  const modeInputs = document.querySelectorAll('input[name="mode"]');
+  const codeArea = document.querySelector('#codeInputArea');
+  const existingNotice = document.querySelector('#existingSyncNotice');
+  modeInputs.forEach(input => input.addEventListener('change', () => {
+    const existing = input.checked && input.value === 'existing';
+    if (existing) { codeArea.hidden = true; existingNotice.hidden = false; }
+    else if (input.checked) { codeArea.hidden = false; existingNotice.hidden = true; }
+  }));
+  document.querySelector('#syncForm').addEventListener('submit', event => {
+    const mode = document.querySelector('input[name="mode"]:checked').value;
+    const codes = document.querySelector('#id_codes').value.trim();
+    if (mode === 'codes' && !codes) { event.preventDefault(); alert('가져올 상품코드를 입력해 주세요.'); return; }
+    const button = document.querySelector('#syncButton'); button.disabled = true; button.textContent = '사방넷에서 가져오는 중…';
+  });
+</script>
+{% endblock %}
