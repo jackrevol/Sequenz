@@ -130,6 +130,17 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .review-form,.inquiry-form { display:grid; gap:9px; margin-top:14px; }
 .address-editor { display:grid; grid-template-columns:repeat(2,1fr); gap:7px; padding:12px 0; border-bottom:1px solid var(--line); }
 .address-editor input { min-width:0; padding:9px; border:1px solid var(--line); }
+.address-section-head,.checkout-section-head { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.address-section-head h2,.checkout-section-head h2 { margin:0; }
+.address-add-button { padding:9px 13px; color:#fff; background:var(--ink); border:1px solid var(--ink); font-size:12px; font-weight:700; }
+.address-dialog { width:min(620px,calc(100% - 28px)); max-height:calc(100dvh - 28px); padding:0; border:0; background:transparent; overflow:visible; }
+.address-dialog::backdrop { background:rgba(0,0,0,.55); backdrop-filter:blur(2px); }
+.address-dialog-panel { max-height:calc(100dvh - 28px); padding:24px; background:#fff; overflow:auto; box-shadow:0 24px 80px rgba(0,0,0,.24); }
+.address-dialog-panel > header { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding-bottom:18px; border-bottom:1px solid var(--line); }
+.address-dialog-panel h3 { margin:6px 0 0; font-size:24px; }
+.address-dialog-close { width:40px; height:40px; padding:0; border:0; background:var(--paper); font-size:25px; line-height:1; }
+.address-modal-form { padding:22px 0 0; border:0; }
+.address-modal-form .primary-button { grid-column:1/-1; }
 .postcode-fields { display:grid; grid-column:1/-1; gap:8px; }
 .postcode-search-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; }
 .postcode-search-button { min-width:104px; padding:0 16px; color:#fff; background:var(--ink); border:1px solid var(--ink); font-weight:700; cursor:pointer; }
@@ -259,6 +270,23 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 .page-checkout-form { margin:0; }
 .page-checkout-form section { display:grid; gap:10px; padding-bottom:34px; }
 .page-checkout-form section h2 { margin:0 0 8px; font-size:18px; }
+.page-checkout-form .checkout-section-head h2 { margin:0; }
+.same-recipient-row { display:flex; align-items:center; gap:7px; font-size:12px; font-weight:700; white-space:nowrap; }
+.same-recipient-row input { width:auto; margin:0; }
+.page-checkout-form input.copied-from-buyer { background:#f7f7f4; }
+.saved-address-book { min-width:0; margin:4px 0 10px; padding:0; border:0; }
+.saved-address-book legend { margin-bottom:9px; font-size:12px; font-weight:700; }
+.saved-address-grid { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(250px,84%); gap:8px; overflow:auto; padding-bottom:6px; scroll-snap-type:x proximity; }
+.saved-address-card { position:relative; display:block; scroll-snap-align:start; cursor:pointer; }
+.saved-address-card > input { position:absolute; opacity:0; pointer-events:none; }
+.saved-address-card > span { display:grid; gap:5px; min-height:118px; padding:14px; border:1px solid var(--line); background:#fff; }
+.saved-address-card > input:checked + span { border-color:var(--ink); box-shadow:inset 0 0 0 1px var(--ink); }
+.saved-address-card strong { display:flex; align-items:center; gap:7px; }
+.saved-address-card em { padding:3px 6px; color:#fff; background:var(--ink); font-size:9px; font-style:normal; }
+.saved-address-card small { color:var(--muted); }
+.saved-address-card span span { font-size:12px; line-height:1.5; }
+.saved-address-empty { display:grid; gap:4px; margin:4px 0 10px; padding:14px; background:var(--paper); font-size:12px; }
+.saved-address-empty span { color:var(--muted); }
 .order-detail-page { max-width:800px; margin:auto; padding-top:38px; }
 .order-detail-page > header { padding-bottom:28px; border-bottom:2px solid var(--ink); }
 .order-detail-page .order-item { display:flex; justify-content:space-between; gap:20px; }
@@ -291,6 +319,8 @@ button:disabled { cursor:not-allowed; opacity:.45; }
   .cart-page-item { display:grid; grid-template-columns:auto minmax(0,1fr); gap:10px 12px; }
   .cart-page-item .quantity { grid-column:2; justify-content:flex-start; }
   .address-editor { grid-template-columns:1fr; }
+  .checkout-section-head { align-items:flex-start; flex-direction:column; gap:8px; }
+  .address-dialog-panel { padding:20px 16px; }
   .product-page { padding-bottom:142px; }
 }
 @media (min-width:800px) { .storefront-main { max-width:1440px; margin:auto; } .hero { min-height:560px; } .product-grid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:38px 16px; } .collection-products { grid-auto-flow:initial; grid-template-columns:repeat(4,minmax(0,1fr)); overflow:visible; } .bottom-nav { display:none; } body { padding-bottom:0; } }

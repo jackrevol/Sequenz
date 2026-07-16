@@ -67,6 +67,57 @@ function authTabs(active) {
   return `<div class="auth-tabs"><button data-auth-tab="login" class="${active === 'login' ? 'active' : ''}">로그인</button><button data-auth-tab="register" class="${active === 'register' ? 'active' : ''}">회원가입</button></div>`;
 }
 
+function savedAddressChoices(member, addresses) {
+  if (!member) return '';
+  if (!addresses.length) {
+    return '<div class="saved-address-empty"><strong>저장된 배송지가 없습니다.</strong><span>아래에서 주소를 검색해 입력해 주세요.</span></div>';
+  }
+  return `<fieldset class="saved-address-book"><legend>주소록에서 불러오기</legend><div class="saved-address-grid">${addresses.map((address, index) => `
+    <label class="saved-address-card">
+      <input type="radio" name="saved_address_id" value="${Number(address.id)}" ${index === 0 ? 'checked' : ''}>
+      <span><strong>${h(address.label)}${address.is_default ? '<em>기본 배송지</em>' : ''}</strong><small>${h(address.recipient_name)} · ${h(address.recipient_phone)}</small><span>${h(address.address1)} ${h(address.address2)}</span></span>
+    </label>`).join('')}</div></fieldset>`;
+}
+
+function bindCheckoutAddressControls(form, addresses) {
+  const sameAsBuyer = form.querySelector('#sameAsBuyer');
+  const buyerName = form.querySelector('[name="buyer_name"]');
+  const buyerPhone = form.querySelector('[name="buyer_phone"]');
+  const recipientName = form.querySelector('[name="recipient_name"]');
+  const recipientPhone = form.querySelector('[name="recipient_phone"]');
+
+  const syncRecipient = () => {
+    const checked = sameAsBuyer.checked;
+    recipientName.readOnly = checked;
+    recipientPhone.readOnly = checked;
+    recipientName.classList.toggle('copied-from-buyer', checked);
+    recipientPhone.classList.toggle('copied-from-buyer', checked);
+    if (checked) {
+      recipientName.value = buyerName.value;
+      recipientPhone.value = buyerPhone.value;
+    }
+  };
+  sameAsBuyer.addEventListener('change', syncRecipient);
+  buyerName.addEventListener('input', () => { if (sameAsBuyer.checked) recipientName.value = buyerName.value; });
+  buyerPhone.addEventListener('input', () => { if (sameAsBuyer.checked) recipientPhone.value = buyerPhone.value; });
+
+  form.querySelectorAll('[name="saved_address_id"]').forEach(input => {
+    input.addEventListener('change', () => {
+      if (!input.checked) return;
+      const address = addresses.find(item => Number(item.id) === Number(input.value));
+      if (!address) return;
+      sameAsBuyer.checked = false;
+      syncRecipient();
+      recipientName.value = address.recipient_name || '';
+      recipientPhone.value = address.recipient_phone || '';
+      form.querySelector('[name="postal_code"]').value = address.postal_code || '';
+      form.querySelector('[name="address1"]').value = address.address1 || '';
+      form.querySelector('[name="address2"]').value = address.address2 || '';
+      form.querySelector('[name="delivery_memo"]').value = address.delivery_memo || '';
+    });
+  });
+}
+
 function renderLogin() {
   pageContent.innerHTML = `<div class="account-guest-layout"><section>${authTabs('login')}<form id="loginForm" class="auth-form"><input name="username" required placeholder="아이디" autocomplete="username"><input name="password" type="password" required placeholder="비밀번호" autocomplete="current-password"><button class="primary-button">로그인</button></form></section><section class="guest-order-box"><h2>비회원 주문조회</h2><p>주문 시 입력한 정보로 배송 현황을 확인할 수 있습니다.</p><form id="guestOrderLookupForm" class="auth-form"><input name="order_number" required placeholder="주문번호"><input name="buyer_name" required placeholder="주문자명"><input name="buyer_phone" required placeholder="주문자 연락처"><button class="secondary-button">주문조회</button></form></section></div>`;
 }
@@ -86,12 +137,15 @@ async function renderAccount() {
     <aside class="member-overview"><p class="brand-name">MEMBER</p><h2>${h(member.name || member.username)}님</h2><p>${h(member.email)}</p><dl><div><dt>등급</dt><dd>${h(benefits.account.tier_name)}</dd></div><div><dt>적립금</dt><dd>${Number(benefits.account.point_balance).toLocaleString('ko-KR')}P</dd></div><div><dt>쿠폰</dt><dd>${benefits.coupons.filter(item => item.status === 'available').length}장</dd></div></dl><button id="logoutButton" class="secondary-button">로그아웃</button></aside>
     <div class="account-sections">
       <section class="mypage-section"><h2>주문내역</h2><div class="mini-list">${orders.results.map(order => `<a class="mini-item" href="/orders/${encodeURIComponent(order.order_number)}/"><span>${h(order.order_number)}<br><small>${h(order.status)} · ${h(order.fulfillment_status)}</small></span><strong>${won(order.payment_amount)}</strong></a>`).join('') || '<p>주문내역이 없습니다.</p>'}</div></section>
-      <section id="addresses" class="mypage-section"><h2>배송지 관리</h2><form id="newAddressForm" class="address-editor"><input name="label" required placeholder="배송지명"><input name="recipient_name" required placeholder="수취인"><input name="recipient_phone" required placeholder="연락처">${SequenzPostcode.fields()}<input name="delivery_memo" placeholder="배송 메모"><label class="checkbox-row"><input name="is_default" type="checkbox"> 기본 배송지</label><button class="secondary-button">배송지 추가</button></form><div class="mini-list">${addresses.results.map(address => `<div class="mini-item"><span><strong>${h(address.label)}</strong>${address.is_default ? ' · 기본' : ''}<br><small>${h(address.recipient_name)} · ${h(address.address1)} ${h(address.address2)}</small></span><button class="text-button" data-address-delete="${Number(address.id)}">삭제</button></div>`).join('') || '<p>등록된 배송지가 없습니다.</p>'}</div></section>
+      <section id="addresses" class="mypage-section"><div class="address-section-head"><h2>배송지 관리</h2><button type="button" class="address-add-button" data-address-dialog-open>배송지 추가</button></div><div class="mini-list">${addresses.results.map(address => `<div class="mini-item"><span><strong>${h(address.label)}</strong>${address.is_default ? ' · 기본' : ''}<br><small>${h(address.recipient_name)} · ${h(address.address1)} ${h(address.address2)}</small></span><button class="text-button" data-address-delete="${Number(address.id)}">삭제</button></div>`).join('') || '<p>등록된 배송지가 없습니다.</p>'}</div><dialog id="addressDialog" class="address-dialog" aria-labelledby="addressDialogTitle"><div class="address-dialog-panel"><header><div><p class="eyebrow">ADDRESS BOOK</p><h3 id="addressDialogTitle">배송지 추가</h3></div><button type="button" class="address-dialog-close" data-address-dialog-close aria-label="닫기">×</button></header><form id="newAddressForm" class="address-editor address-modal-form"><input name="label" required placeholder="배송지명 (예: 집, 회사)"><input name="recipient_name" required placeholder="수취인"><input name="recipient_phone" required placeholder="연락처">${SequenzPostcode.fields()}<input name="delivery_memo" placeholder="배송 메모"><label class="checkbox-row"><input name="is_default" type="checkbox"> 기본 배송지로 설정</label><button class="primary-button">배송지 저장</button></form></div></dialog></section>
       <section id="wishlist" class="mypage-section"><h2>찜한 상품</h2><div class="mini-list">${wishlist.results.map(item => `<a class="mini-item" href="/products/${Number(item.id)}/"><span>${h(item.display_name)}</span><strong>${won(item.selling_price_snapshot)}</strong></a>`).join('') || '<p>찜한 상품이 없습니다.</p>'}</div></section>
       <section id="recent" class="mypage-section"><h2>최근 본 상품</h2><div class="mini-list">${recent.results.map(item => `<a class="mini-item" href="/products/${Number(item.id)}/"><span>${h(item.display_name)}</span><strong>${won(item.selling_price_snapshot)}</strong></a>`).join('') || '<p>최근 본 상품이 없습니다.</p>'}</div></section>
       <section class="mypage-section"><h2>1:1 문의</h2><form id="inquiryForm" class="inquiry-form"><select name="category"><option value="order">주문</option><option value="delivery">배송</option><option value="product">상품</option><option value="return">교환·반품</option><option value="other">기타</option></select><input name="subject" required placeholder="문의 제목"><textarea name="body" required placeholder="문의 내용"></textarea><button class="primary-button">문의 등록</button></form><div class="mini-list">${inquiries.results.map(item => `<div class="mini-item"><span>${h(item.subject)}<br><small>${h(item.status)}</small>${item.answer ? `<p class="inquiry-answer">${h(item.answer)}</p>` : ''}</span></div>`).join('')}</div></section>
     </div>
   </div>`;
+  document.querySelector('#addressDialog')?.addEventListener('click', event => {
+    if (event.target === event.currentTarget) event.currentTarget.close();
+  });
   scrollToHashTarget();
 }
 
@@ -138,7 +192,9 @@ async function renderCheckout() {
   const benefits = member ? await api('/api/benefits/mine/') : null;
   const address = addresses.results[0] || {};
   const initialQuote = await api('/api/commerce/cart/benefit-quote/', { method:'POST', body:JSON.stringify({ cart_item_ids:orderItems.map(item => Number(item.id)) }) });
-  pageContent.innerHTML = `<div class="checkout-page-layout"><form id="checkoutForm" class="checkout-form page-checkout-form" data-cart-item-ids="${orderItems.map(item => Number(item.id)).join(',')}"><section><h2>주문자 정보</h2><input name="buyer_name" required placeholder="주문자명" value="${h(member?.name || '')}"><input name="buyer_phone" required placeholder="주문자 연락처" value="${h(member?.phone || '')}"><input name="buyer_email" type="email" placeholder="이메일" value="${h(member?.email || '')}"></section><section><h2>배송지 정보</h2><input name="recipient_name" required placeholder="수취인명" value="${h(address.recipient_name || '')}"><input name="recipient_phone" required placeholder="수취인 연락처" value="${h(address.recipient_phone || '')}">${SequenzPostcode.fields(address)}<input name="delivery_memo" placeholder="배송 메모" value="${h(address.delivery_memo || '')}"></section>${benefits ? `<section><h2>쿠폰·적립금</h2><div class="benefit-fields"><label>쿠폰<select name="coupon_code"><option value="">사용 안 함</option>${benefits.coupons.filter(item => item.status === 'available').map(item => `<option value="${h(item.coupon.code)}">${h(item.coupon.name)}</option>`).join('')}</select></label><label>적립금 사용 <small>보유 ${Number(benefits.account.point_balance).toLocaleString('ko-KR')}P</small><input type="number" name="point_to_use" min="0" max="${Number(benefits.account.point_balance)}" value="0"></label></div></section>` : ''}<section><h2>결제수단</h2><div class="payment-grid"><label class="payment-option"><input type="radio" name="payment_method" value="CARD" checked><span>신용·체크카드</span></label><label class="payment-option"><input type="radio" name="payment_method" value="NAVERPAY"><span>네이버페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="KAKAOPAY"><span>카카오페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="TOSSPAY"><span>토스페이</span></label></div></section></form><aside class="order-summary"><h2>ORDER SUMMARY</h2>${orderItems.map(item => `<p class="summary-item"><span>${h(item.display_name)} × ${Number(item.quantity)}</span><strong>${won(item.line_total)}</strong></p>`).join('')}<div class="summary-total"><span>결제 예정 금액</span><strong id="checkoutAmount">${won(initialQuote.payment_amount)}</strong></div><button form="checkoutForm" class="primary-button">결제하기</button></aside></div>`;
+  pageContent.innerHTML = `<div class="checkout-page-layout"><form id="checkoutForm" class="checkout-form page-checkout-form" data-cart-item-ids="${orderItems.map(item => Number(item.id)).join(',')}"><section><h2>주문자 정보</h2><input name="buyer_name" required placeholder="주문자명" value="${h(member?.name || '')}"><input name="buyer_phone" required placeholder="주문자 연락처" value="${h(member?.phone || '')}"><input name="buyer_email" type="email" placeholder="이메일" value="${h(member?.email || '')}"></section><section><div class="checkout-section-head"><h2>배송지 정보</h2><label class="same-recipient-row"><input id="sameAsBuyer" type="checkbox"> 주문자 이름·연락처와 동일</label></div>${savedAddressChoices(member, addresses.results)}<input name="recipient_name" required placeholder="수취인명" value="${h(address.recipient_name || '')}"><input name="recipient_phone" required placeholder="수취인 연락처" value="${h(address.recipient_phone || '')}">${SequenzPostcode.fields(address)}<input name="delivery_memo" placeholder="배송 메모" value="${h(address.delivery_memo || '')}"></section>${benefits ? `<section><h2>쿠폰·적립금</h2><div class="benefit-fields"><label>쿠폰<select name="coupon_code"><option value="">사용 안 함</option>${benefits.coupons.filter(item => item.status === 'available').map(item => `<option value="${h(item.coupon.code)}">${h(item.coupon.name)}</option>`).join('')}</select></label><label>적립금 사용 <small>보유 ${Number(benefits.account.point_balance).toLocaleString('ko-KR')}P</small><input type="number" name="point_to_use" min="0" max="${Number(benefits.account.point_balance)}" value="0"></label></div></section>` : ''}<section><h2>결제수단</h2><div class="payment-grid"><label class="payment-option"><input type="radio" name="payment_method" value="CARD" checked><span>신용·체크카드</span></label><label class="payment-option"><input type="radio" name="payment_method" value="NAVERPAY"><span>네이버페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="KAKAOPAY"><span>카카오페이</span></label><label class="payment-option"><input type="radio" name="payment_method" value="TOSSPAY"><span>토스페이</span></label></div></section></form><aside class="order-summary"><h2>ORDER SUMMARY</h2>${orderItems.map(item => `<p class="summary-item"><span>${h(item.display_name)} × ${Number(item.quantity)}</span><strong>${won(item.line_total)}</strong></p>`).join('')}<div class="summary-total"><span>결제 예정 금액</span><strong id="checkoutAmount">${won(initialQuote.payment_amount)}</strong></div><button form="checkoutForm" class="primary-button">결제하기</button></aside></div>`;
+  const checkoutForm = document.querySelector('#checkoutForm');
+  bindCheckoutAddressControls(checkoutForm, addresses.results);
   const benefitInputs = pageContent.querySelectorAll('[name="coupon_code"], [name="point_to_use"]');
   benefitInputs.forEach(input => input.addEventListener('change', async () => { const form = document.querySelector('#checkoutForm'); const quote = await api('/api/commerce/cart/benefit-quote/', { method:'POST', body:JSON.stringify({ coupon_code:form.coupon_code?.value || '', point_to_use:Number(form.point_to_use?.value || 0), cart_item_ids:form.dataset.cartItemIds.split(',').map(Number) }) }); document.querySelector('#checkoutAmount').textContent = won(quote.payment_amount); }));
 }
@@ -188,6 +244,8 @@ document.addEventListener('click', async event => {
     if (!itemIds.length) return toast('주문할 상품을 선택해 주세요.');
     localStorage.setItem('sequenzCheckoutItemIds', JSON.stringify(itemIds)); location.href = '/checkout/';
   }
+  if (event.target.matches('[data-address-dialog-open]')) document.querySelector('#addressDialog')?.showModal();
+  if (event.target.matches('[data-address-dialog-close]')) document.querySelector('#addressDialog')?.close();
   if (event.target.dataset.addressDelete) { await api(`/api/accounts/addresses/${event.target.dataset.addressDelete}/`, { method:'DELETE' }); await renderAccount(); toast('배송지를 삭제했습니다.'); }
 });
 
@@ -204,7 +262,7 @@ document.addEventListener('submit', async event => {
   if (event.target.id === 'guestOrderLookupForm') { event.preventDefault(); try { const order = await api('/api/commerce/orders/guest-lookup/', { method:'POST', body:JSON.stringify(Object.fromEntries(new FormData(event.target))) }); sessionStorage.setItem(`sequenzGuestOrder:${order.order_number}`, JSON.stringify(order)); location.href = `/orders/${encodeURIComponent(order.order_number)}/`; } catch (error) { toast(error.message); } }
   if (event.target.id === 'inquiryForm') { event.preventDefault(); try { await api('/api/community/inquiries/', { method:'POST', body:JSON.stringify(Object.fromEntries(new FormData(event.target))) }); await renderAccount(); toast('문의를 등록했습니다.'); } catch (error) { toast(error.message); } }
   if (event.target.id === 'newAddressForm') { event.preventDefault(); const form = new FormData(event.target); const data = Object.fromEntries(form); data.is_default = form.has('is_default'); try { await api('/api/accounts/addresses/', { method:'POST', body:JSON.stringify(data) }); await renderAccount(); toast('배송지를 추가했습니다.'); } catch (error) { toast(error.message); } }
-  if (event.target.id === 'checkoutForm') { event.preventDefault(); const form = new FormData(event.target); const method = form.get('payment_method'); form.delete('payment_method'); const data = Object.fromEntries(form); data.cart_item_ids = event.target.dataset.cartItemIds.split(',').map(Number); event.submitter.disabled = true; try { const order = await api('/api/commerce/orders/', { method:'POST', body:JSON.stringify(data) }); localStorage.removeItem('sequenzCheckoutItemIds'); await requestPayment(order.order_number, method); } catch (error) { event.submitter.disabled = false; toast(error.message); } }
+  if (event.target.id === 'checkoutForm') { event.preventDefault(); const form = new FormData(event.target); const method = form.get('payment_method'); form.delete('payment_method'); form.delete('saved_address_id'); const data = Object.fromEntries(form); data.cart_item_ids = event.target.dataset.cartItemIds.split(',').map(Number); event.submitter.disabled = true; try { const order = await api('/api/commerce/orders/', { method:'POST', body:JSON.stringify(data) }); localStorage.removeItem('sequenzCheckoutItemIds'); await requestPayment(order.order_number, method); } catch (error) { event.submitter.disabled = false; toast(error.message); } }
 });
 
 document.addEventListener('click', async event => {
