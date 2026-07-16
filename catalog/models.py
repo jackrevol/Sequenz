@@ -140,8 +140,8 @@ class ProductVariant(models.Model):
 
 class ProductImage(models.Model):
     class Source(models.TextChoices):
-        SABANGNET = "sabangnet", "Sabangnet"
-        ADMIN = "admin", "Admin"
+        SABANGNET = "sabangnet", "사방넷"
+        ADMIN = "admin", "관리자 등록"
 
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="images")
     source = models.CharField(max_length=20, choices=Source.choices, default=Source.SABANGNET)
@@ -205,9 +205,9 @@ class SearchKeyword(models.Model):
 
 class ProductSyncSnapshot(models.Model):
     class Status(models.TextChoices):
-        CREATED = "created", "Created"
-        UPDATED = "updated", "Updated"
-        FAILED = "failed", "Failed"
+        CREATED = "created", "신규 등록"
+        UPDATED = "updated", "정보 갱신"
+        FAILED = "failed", "실패"
 
     product = models.ForeignKey(Product, null=True, blank=True, on_delete=models.SET_NULL, related_name="sync_snapshots")
     sabangnet_product_code = models.CharField(max_length=80, db_index=True)
@@ -222,12 +222,12 @@ class ProductSyncSnapshot(models.Model):
 
 class ProductListing(models.Model):
     class Status(models.TextChoices):
-        DRAFT = "draft", "Draft"
-        SCHEDULED = "scheduled", "Scheduled"
-        ACTIVE = "active", "Active"
-        PAUSED = "paused", "Paused"
-        ENDED = "ended", "Ended"
-        ARCHIVED = "archived", "Archived"
+        DRAFT = "draft", "작성 중"
+        SCHEDULED = "scheduled", "게시 예정"
+        ACTIVE = "active", "판매 중"
+        PAUSED = "paused", "판매 일시중지"
+        ENDED = "ended", "판매 종료"
+        ARCHIVED = "archived", "보관"
 
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="listings")
     listing_code = models.CharField(max_length=80, unique=True)
@@ -277,10 +277,10 @@ class ProductListing(models.Model):
 
 class ProductListingVariant(models.Model):
     class Status(models.TextChoices):
-        ACTIVE = "active", "Active"
-        HIDDEN = "hidden", "Hidden"
-        SOLD_OUT = "sold_out", "Sold out"
-        PAUSED = "paused", "Paused"
+        ACTIVE = "active", "판매 중"
+        HIDDEN = "hidden", "숨김"
+        SOLD_OUT = "sold_out", "품절"
+        PAUSED = "paused", "판매 일시중지"
 
     listing = models.ForeignKey(ProductListing, on_delete=models.CASCADE, related_name="variants")
     variant = models.ForeignKey(ProductVariant, on_delete=models.PROTECT, related_name="listing_variants")

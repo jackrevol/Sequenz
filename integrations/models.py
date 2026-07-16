@@ -3,10 +3,10 @@ from django.db import models
 
 class SabangnetOrderExport(models.Model):
     class Status(models.TextChoices):
-        PENDING = "pending", "Pending"
-        GENERATED = "generated", "File generated"
-        REGISTERED = "registered", "Registered"
-        FAILED = "failed", "Failed"
+        PENDING = "pending", "대기"
+        GENERATED = "generated", "파일 생성"
+        REGISTERED = "registered", "사방넷 등록 완료"
+        FAILED = "failed", "실패"
 
     order = models.OneToOneField(
         "commerce.Order",
@@ -24,11 +24,11 @@ class SabangnetOrderExport(models.Model):
 
 class IntegrationJob(models.Model):
     class Status(models.TextChoices):
-        QUEUED = "queued", "Queued"
-        RUNNING = "running", "Running"
-        SUCCEEDED = "succeeded", "Succeeded"
-        FAILED = "failed", "Failed"
-        PARTIAL = "partial", "Partial"
+        QUEUED = "queued", "대기"
+        RUNNING = "running", "진행 중"
+        SUCCEEDED = "succeeded", "성공"
+        FAILED = "failed", "실패"
+        PARTIAL = "partial", "일부 성공"
 
     provider = models.CharField(max_length=40, db_index=True)
     job_type = models.CharField(max_length=40, db_index=True)
@@ -39,6 +39,7 @@ class IntegrationJob(models.Model):
     success_count = models.PositiveIntegerField(default=0)
     failure_count = models.PositiveIntegerField(default=0)
     requested_by = models.ForeignKey("auth.User", null=True, blank=True, on_delete=models.SET_NULL)
+    request_summary = models.JSONField(default=dict, blank=True)
     error_summary = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

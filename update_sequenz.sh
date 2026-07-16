@@ -57,7 +57,7 @@ Environment overrides:
   HEALTH_INTERVAL_SECONDS Health check interval seconds (default: 2)
   GRACE_SECONDS          Seconds to keep the previous slot (default: 10)
   DATA_VOLUME            Persistent /data volume (default: sequenz_data)
-  DEPLOY_WORKER          Also replace payment-expirer: true/false (default: true)
+  DEPLOY_WORKER          Also replace background job worker: true/false (default: true)
   RESTART_POLICY         Docker restart policy (default: unless-stopped)
 
 NPM Proxy Host target:
@@ -315,7 +315,7 @@ deploy_worker() {
     --mount "type=volume,source=${DATA_VOLUME},target=/data" \
     --restart "$RESTART_POLICY" \
     "$IMAGE" \
-    sh -c 'while true; do python manage.py expire_payment_pending_orders; sleep 60; done' >/dev/null
+    sh -c 'while true; do python manage.py process_integration_jobs --limit 5; python manage.py expire_payment_pending_orders; sleep 10; done' >/dev/null
 
   sleep 2
   if [[ "$(docker inspect --format '{{.State.Running}}' "$next_worker")" != "true" ]]; then

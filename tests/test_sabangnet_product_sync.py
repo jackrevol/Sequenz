@@ -1,6 +1,7 @@
 import pytest
 from copy import deepcopy
 from unittest.mock import patch
+from django.core.management import call_command
 
 from catalog.models import Category, Product, ProductImage, ProductListing, ProductSyncSnapshot
 from integrations.models import ExternalApiLog, IntegrationJob, OperationsAuditLog
@@ -141,15 +142,22 @@ def test_admin_can_manually_sync_multiple_sabangnet_products(client, django_user
         payload["optionInfo"]["options"][0].update({"variantCode": f"VARIANT-{code}", "barcode": f"BARCODE-{code}"})
         return payload
 
-    with patch("catalog.admin.SabangnetProductClient.fetch_product", side_effect=fetch_product):
-        response = client.post(
-            "/admin/catalog/product/sabangnet-sync/",
-            {"identifier_type": "product_code", "mode": "codes", "codes": "SB-100\nSB-200"},
-        )
+    response = client.post(
+        "/admin/catalog/product/sabangnet-sync/",
+        {"identifier_type": "product_code", "mode": "codes", "codes": "SB-100\nSB-200"},
+    )
 
     assert response.status_code == 302
-    assert set(Product.objects.values_list("sabangnet_product_code", flat=True)) == {"SB-100", "SB-200"}
     job = IntegrationJob.objects.get(job_type="manual_product_sync")
+    assert job.status == IntegrationJob.Status.QUEUED
+    assert job.request_summary["codes"] == ["SB-100", "SB-200"]
+    assert not Product.objects.exists()
+
+    with patch("integrations.sabangnet_product_jobs.SabangnetProductClient.fetch_product", side_effect=fetch_product):
+        call_command("process_integration_jobs")
+
+    job.refresh_from_db()
+    assert set(Product.objects.values_list("sabangnet_product_code", flat=True)) == {"SB-100", "SB-200"}
     assert job.status == IntegrationJob.Status.SUCCEEDED
     assert job.success_count == 2
     assert job.failure_count == 0
@@ -167,18 +175,42 @@ def test_admin_manual_product_sync_keeps_successes_and_logs_failures(client, dja
             raise SabangnetProductError("상품을 찾을 수 없습니다.")
         return {**PRODUCT_PAYLOAD, "productCode": code, "customProductCode": f"CUSTOM-{code}"}
 
-    with patch("catalog.admin.SabangnetProductClient.fetch_product", side_effect=fetch_product):
-        response = client.post(
-            "/admin/catalog/product/sabangnet-sync/",
-            {"identifier_type": "product_code", "mode": "codes", "codes": "SB-GOOD, SB-BAD"},
-        )
+    response = client.post(
+        "/admin/catalog/product/sabangnet-sync/",
+        {"identifier_type": "product_code", "mode": "codes", "codes": "SB-GOOD, SB-BAD"},
+    )
 
     assert response.status_code == 302
-    assert Product.objects.filter(sabangnet_product_code="SB-GOOD").exists()
     job = IntegrationJob.objects.get(job_type="manual_product_sync")
+
+    with patch("integrations.sabangnet_product_jobs.SabangnetProductClient.fetch_product", side_effect=fetch_product):
+        call_command("process_integration_jobs")
+
+    job.refresh_from_db()
+    assert Product.objects.filter(sabangnet_product_code="SB-GOOD").exists()
     assert job.status == IntegrationJob.Status.PARTIAL
     assert job.success_count == 1
     assert job.failure_count == 1
     error = ExternalApiLog.objects.get(job=job)
     assert error.request_summary["product_identifier"] == "SB-BAD"
     assert "찾을 수 없습니다" in error.error_message
+
+
+@pytest.mark.django_db
+def test_admin_queues_166_products_without_syncing_in_web_request(client, django_user_model):
+    admin = django_user_model.objects.create_superuser("bulk-sync-admin", "bulk@example.com", "password")
+    client.force_login(admin)
+    codes = [f"SB-{number:04d}" for number in range(166)]
+
+    with patch("integrations.sabangnet_product_jobs.SabangnetProductClient.fetch_product") as fetch:
+        response = client.post(
+            "/admin/catalog/product/sabangnet-sync/",
+            {"identifier_type": "product_code", "mode": "codes", "codes": "\n".join(codes)},
+        )
+
+    assert response.status_code == 302
+    assert not fetch.called
+    job = IntegrationJob.objects.get(job_type="manual_product_sync")
+    assert job.status == IntegrationJob.Status.QUEUED
+    assert job.total_count == 166
+    assert job.request_summary["codes"] == codes

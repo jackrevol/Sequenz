@@ -6,11 +6,9 @@ from django.core.exceptions import PermissionDenied
 from django.shortcuts import redirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
-from django.utils import timezone
 
 from .models import Brand, Category, Product, ProductAttribute, ProductImage, ProductInformationNotice, ProductListing, ProductListingVariant, ProductSyncSnapshot, ProductVariant, SearchKeyword
-from integrations.models import ExternalApiLog, IntegrationJob, OperationsAuditLog
-from integrations.sabangnet_products import SabangnetProductClient, sync_product_safely
+from integrations.sabangnet_product_jobs import enqueue_manual_product_sync
 
 
 MAX_MANUAL_PRODUCT_SYNC_COUNT = 500
@@ -94,18 +92,19 @@ class ProductAdmin(admin.ModelAdmin):
                     level=messages.ERROR,
                 )
             else:
-                result = self._run_sabangnet_sync(request, codes, identifier_type)
-                if result["failure_count"]:
-                    level = messages.WARNING if result["success_count"] else messages.ERROR
-                    message = (
-                        f"사방넷 상품 동기화 완료: 성공 {result['success_count']}건, "
-                        f"실패 {result['failure_count']}건. 실패 사유는 외부 연동 로그에서 확인하세요."
-                    )
-                else:
-                    level = messages.SUCCESS
-                    message = f"사방넷 상품 {result['success_count']}건을 성공적으로 가져왔습니다."
-                self.message_user(request, message, level=level)
-                return redirect(reverse("admin:catalog_product_changelist"))
+                job = enqueue_manual_product_sync(
+                    codes=codes,
+                    identifier_type=identifier_type,
+                    requested_by=request.user,
+                    ip_address=request.META.get("REMOTE_ADDR"),
+                )
+                self.message_user(
+                    request,
+                    f"사방넷 상품 {len(codes)}건의 동기화를 요청했습니다. "
+                    "백그라운드에서 처리되며 연동 작업 화면에서 진행 상황을 확인할 수 있습니다.",
+                    level=messages.SUCCESS,
+                )
+                return redirect(reverse("admin:integrations_integrationjob_change", args=[job.pk]))
 
         context = {
             **self.admin_site.each_context(request),
@@ -114,7 +113,7 @@ class ProductAdmin(admin.ModelAdmin):
             "has_view_permission": self.has_view_permission(request),
             "configured": {
                 "base_url": bool(settings.SABANGNET_API_BASE_URL),
-                "service_account": bool(settings.SABANGNET_SVC_ACCOUNT_ID),
+                "service_code": bool(settings.SABANGNET_SVC_ACCOUNT_ID),
                 "authentication": bool(
                     settings.SABANGNET_BEARER_TOKEN
                     or (settings.SABANGNET_CLIENT_ID and settings.SABANGNET_CLIENT_SECRET)
@@ -131,59 +130,6 @@ class ProductAdmin(admin.ModelAdmin):
             field = "custom_product_code" if identifier_type == "custom_product_code" else "sabangnet_product_code"
             return list(Product.objects.exclude(**{f"{field}__isnull": True}).exclude(**{field: ""}).values_list(field, flat=True))
         return list(dict.fromkeys(code.strip() for code in re.split(r"[\s,]+", raw_codes) if code.strip()))
-
-    @staticmethod
-    def _run_sabangnet_sync(request, codes, identifier_type):
-        job = IntegrationJob.objects.create(
-            provider="sabangnet",
-            job_type="manual_product_sync",
-            status=IntegrationJob.Status.RUNNING,
-            started_at=timezone.now(),
-            total_count=len(codes),
-            requested_by=request.user,
-        )
-        client = SabangnetProductClient()
-        success_count = 0
-        errors = []
-        for code in codes:
-            try:
-                kwargs = {identifier_type: code}
-                payload = client.fetch_product(**kwargs)
-                sync_product_safely(payload)
-                success_count += 1
-            except Exception as exc:
-                safe_error = str(exc)[:500]
-                errors.append(f"{code}: {safe_error}")
-                ExternalApiLog.objects.create(
-                    provider="sabangnet",
-                    job=job,
-                    operation="manual_product_sync",
-                    request_summary={"identifier_type": identifier_type, "product_identifier": code},
-                    error_code=getattr(exc, "code", "SYNC_FAILED") or "SYNC_FAILED",
-                    error_message=safe_error,
-                )
-        failure_count = len(codes) - success_count
-        job.success_count = success_count
-        job.failure_count = failure_count
-        job.status = (
-            IntegrationJob.Status.SUCCEEDED if failure_count == 0
-            else IntegrationJob.Status.FAILED if success_count == 0
-            else IntegrationJob.Status.PARTIAL
-        )
-        job.error_summary = "\n".join(errors)[:2000]
-        job.finished_at = timezone.now()
-        job.save(update_fields=["success_count", "failure_count", "status", "error_summary", "finished_at"])
-        OperationsAuditLog.objects.create(
-            actor=request.user,
-            action="sabangnet_product_manual_sync",
-            target_type="Product",
-            target_id="bulk",
-            before_summary={"requested_count": len(codes), "identifier_type": identifier_type},
-            after_summary={"success_count": success_count, "failure_count": failure_count, "job_id": job.pk},
-            ip_address=request.META.get("REMOTE_ADDR"),
-        )
-        return {"success_count": success_count, "failure_count": failure_count, "job": job}
-
 
 class ProductListingVariantInline(admin.TabularInline):
     model = ProductListingVariant

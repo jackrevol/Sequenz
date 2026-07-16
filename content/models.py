@@ -3,15 +3,15 @@ from django.db import models
 
 class HomeBanner(models.Model):
     class MediaType(models.TextChoices):
-        IMAGE = "image", "Image"
-        VIDEO = "video", "Video"
+        IMAGE = "image", "이미지"
+        VIDEO = "video", "동영상"
 
     class LinkType(models.TextChoices):
-        NONE = "none", "None"
-        LISTING = "listing", "Product listing"
-        BRAND = "brand", "Brand"
-        COLLECTION = "collection", "Collection"
-        EXTERNAL = "external", "External URL"
+        NONE = "none", "연결 없음"
+        LISTING = "listing", "판매 상품"
+        BRAND = "brand", "브랜드"
+        COLLECTION = "collection", "컬렉션"
+        EXTERNAL = "external", "외부 URL"
 
     title = models.CharField(max_length=160)
     subtitle = models.CharField(max_length=300, blank=True)
@@ -162,10 +162,10 @@ class FAQ(models.Model):
 
 class PolicyPage(models.Model):
     class PolicyType(models.TextChoices):
-        TERMS = "terms", "Terms"
-        PRIVACY = "privacy", "Privacy"
-        SHIPPING = "shipping", "Shipping"
-        RETURNS = "returns", "Returns"
+        TERMS = "terms", "이용약관"
+        PRIVACY = "privacy", "개인정보처리방침"
+        SHIPPING = "shipping", "배송 정책"
+        RETURNS = "returns", "교환·반품 정책"
 
     policy_type = models.CharField(max_length=30, choices=PolicyType.choices, unique=True)
     title = models.CharField(max_length=160)

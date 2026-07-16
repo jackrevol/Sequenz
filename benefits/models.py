@@ -52,9 +52,9 @@ class MemberBenefitAccount(models.Model):
 
 class Coupon(models.Model):
     class DiscountType(models.TextChoices):
-        FIXED = "fixed", "Fixed amount"
-        PERCENT = "percent", "Percentage"
-        FREE_SHIPPING = "free_shipping", "Free shipping"
+        FIXED = "fixed", "정액 할인"
+        PERCENT = "percent", "정률 할인"
+        FREE_SHIPPING = "free_shipping", "무료배송"
 
     name = models.CharField(max_length=160)
     code = models.CharField(max_length=80, unique=True)
@@ -74,9 +74,9 @@ class Coupon(models.Model):
 
 class MemberCoupon(models.Model):
     class Status(models.TextChoices):
-        AVAILABLE = "available", "Available"
-        USED = "used", "Used"
-        EXPIRED = "expired", "Expired"
+        AVAILABLE = "available", "사용 가능"
+        USED = "used", "사용 완료"
+        EXPIRED = "expired", "기간 만료"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="member_coupons")
     coupon = models.ForeignKey(Coupon, on_delete=models.PROTECT, related_name="issued_coupons")
@@ -98,13 +98,13 @@ class CouponUsage(models.Model):
 
 class PointLedger(models.Model):
     class Reason(models.TextChoices):
-        ORDER_USE = "order_use", "Order use"
-        ORDER_EARN = "order_earn", "Order earn"
-        ORDER_EARN_REVERSAL = "order_earn_reversal", "Order earn reversal"
-        REVIEW_EARN = "review_earn", "Review earn"
-        CANCEL_RESTORE = "cancel_restore", "Cancellation restore"
-        ADMIN = "admin", "Admin adjustment"
-        EXPIRE = "expire", "Expiration"
+        ORDER_USE = "order_use", "주문 사용"
+        ORDER_EARN = "order_earn", "주문 적립"
+        ORDER_EARN_REVERSAL = "order_earn_reversal", "주문 적립 취소"
+        REVIEW_EARN = "review_earn", "리뷰 적립"
+        CANCEL_RESTORE = "cancel_restore", "취소 복원"
+        ADMIN = "admin", "관리자 조정"
+        EXPIRE = "expire", "유효기간 만료"
 
     account = models.ForeignKey(MemberBenefitAccount, on_delete=models.PROTECT, related_name="point_ledger")
     order = models.ForeignKey("commerce.Order", null=True, blank=True, on_delete=models.PROTECT, related_name="point_ledger")

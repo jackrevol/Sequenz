@@ -13,9 +13,9 @@ def hash_guest_key(raw_key):
 
 class Cart(models.Model):
     class Status(models.TextChoices):
-        ACTIVE = "active", "Active"
-        ORDERED = "ordered", "Ordered"
-        ABANDONED = "abandoned", "Abandoned"
+        ACTIVE = "active", "사용 중"
+        ORDERED = "ordered", "주문 완료"
+        ABANDONED = "abandoned", "이탈"
 
     user = models.ForeignKey(
         "auth.User",
@@ -73,26 +73,26 @@ class CartItem(models.Model):
 
 class Order(models.Model):
     class Status(models.TextChoices):
-        PAYMENT_PENDING = "payment_pending", "Payment pending"
-        PAID = "paid", "Paid"
-        PAYMENT_FAILED = "payment_failed", "Payment failed"
-        CANCELLED = "cancelled", "Cancelled"
+        PAYMENT_PENDING = "payment_pending", "결제 대기"
+        PAID = "paid", "결제 완료"
+        PAYMENT_FAILED = "payment_failed", "결제 실패"
+        CANCELLED = "cancelled", "주문 취소"
 
     class FulfillmentStatus(models.TextChoices):
-        PENDING = "pending", "Pending"
-        PREPARING = "preparing", "Preparing"
-        READY_TO_SHIP = "ready_to_ship", "Ready to ship"
-        SHIPPED = "shipped", "Shipped"
-        IN_TRANSIT = "in_transit", "In transit"
-        DELIVERED = "delivered", "Delivered"
-        CANCELLED = "cancelled", "Cancelled"
-        RETURNED = "returned", "Returned"
+        PENDING = "pending", "상품 준비 전"
+        PREPARING = "preparing", "상품 준비 중"
+        READY_TO_SHIP = "ready_to_ship", "출고 대기"
+        SHIPPED = "shipped", "출고 완료"
+        IN_TRANSIT = "in_transit", "배송 중"
+        DELIVERED = "delivered", "배송 완료"
+        CANCELLED = "cancelled", "배송 취소"
+        RETURNED = "returned", "반품 완료"
 
     class InventoryReservationStatus(models.TextChoices):
-        NONE = "none", "Not reserved"
-        RESERVED = "reserved", "Reserved locally"
-        CONSUMED = "consumed", "Reflected in source stock"
-        RELEASED = "released", "Released"
+        NONE = "none", "예약 없음"
+        RESERVED = "reserved", "재고 예약"
+        CONSUMED = "consumed", "원천 재고 반영"
+        RELEASED = "released", "예약 해제"
 
     order_number = models.CharField(max_length=40, unique=True)
     user = models.ForeignKey(
@@ -168,10 +168,10 @@ class OrderItem(models.Model):
 
 class PaymentAttempt(models.Model):
     class Status(models.TextChoices):
-        CREATED = "created", "Created"
-        CONFIRMED = "confirmed", "Confirmed"
-        FAILED = "failed", "Failed"
-        UNKNOWN = "unknown", "Unknown"
+        CREATED = "created", "생성"
+        CONFIRMED = "confirmed", "승인 완료"
+        FAILED = "failed", "실패"
+        UNKNOWN = "unknown", "상태 미확인"
 
     order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="payment_attempts")
     provider = models.CharField(max_length=40, default="toss_payments")
@@ -214,9 +214,9 @@ class Payment(models.Model):
 
 class OrderStatusHistory(models.Model):
     class Source(models.TextChoices):
-        SYSTEM = "system", "System"
-        SABANGNET = "sabangnet", "Sabangnet"
-        ADMIN = "admin", "Admin"
+        SYSTEM = "system", "시스템"
+        SABANGNET = "sabangnet", "사방넷"
+        ADMIN = "admin", "관리자"
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="status_history")
     source = models.CharField(max_length=20, choices=Source.choices)
@@ -255,9 +255,9 @@ class Shipment(models.Model):
 
 class OrderCancellation(models.Model):
     class Status(models.TextChoices):
-        REQUESTED = "requested", "Requested"
-        COMPLETED = "completed", "Completed"
-        FAILED = "failed", "Failed"
+        REQUESTED = "requested", "요청"
+        COMPLETED = "completed", "완료"
+        FAILED = "failed", "실패"
 
     order = models.OneToOneField(Order, on_delete=models.PROTECT, related_name="cancellation")
     payment = models.ForeignKey(Payment, on_delete=models.PROTECT, related_name="cancellations")
@@ -278,15 +278,15 @@ class OrderCancellation(models.Model):
 
 class OrderClaim(models.Model):
     class ClaimType(models.TextChoices):
-        EXCHANGE = "exchange", "Exchange"
-        RETURN = "return", "Return"
+        EXCHANGE = "exchange", "교환"
+        RETURN = "return", "반품"
 
     class Status(models.TextChoices):
-        REQUESTED = "requested", "Requested"
-        PROCESSING = "processing", "Processing"
-        COMPLETED = "completed", "Completed"
-        REJECTED = "rejected", "Rejected"
-        FAILED = "failed", "Failed"
+        REQUESTED = "requested", "요청"
+        PROCESSING = "processing", "처리 중"
+        COMPLETED = "completed", "완료"
+        REJECTED = "rejected", "거절"
+        FAILED = "failed", "실패"
 
     order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="claims")
     claim_type = models.CharField(max_length=30, choices=ClaimType.choices, db_index=True)

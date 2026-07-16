@@ -146,34 +146,6 @@ FIELD_LABELS = {
 }
 
 
-CHOICE_LABELS = {
-    "catalog.ProductImage.source": {"sabangnet": "사방넷", "admin": "관리자 등록"},
-    "catalog.ProductSyncSnapshot.status": {"created": "신규 등록", "updated": "정보 갱신", "failed": "실패"},
-    "catalog.ProductListing.status": {"draft": "작성 중", "scheduled": "게시 예정", "active": "판매 중", "paused": "판매 일시중지", "ended": "판매 종료", "archived": "보관"},
-    "catalog.ProductListingVariant.status": {"active": "판매 중", "hidden": "숨김", "sold_out": "품절", "paused": "판매 일시중지"},
-    "commerce.Cart.status": {"active": "사용 중", "ordered": "주문 완료", "abandoned": "이탈"},
-    "commerce.Order.status": {"payment_pending": "결제 대기", "paid": "결제 완료", "payment_failed": "결제 실패", "cancelled": "주문 취소"},
-    "commerce.Order.fulfillment_status": {"pending": "상품 준비 전", "preparing": "상품 준비 중", "ready_to_ship": "출고 대기", "shipped": "출고 완료", "in_transit": "배송 중", "delivered": "배송 완료", "cancelled": "배송 취소", "returned": "반품 완료"},
-    "commerce.Order.inventory_reservation_status": {"none": "예약 없음", "reserved": "재고 예약", "consumed": "원천 재고 반영", "released": "예약 해제"},
-    "commerce.PaymentAttempt.status": {"created": "생성", "confirmed": "승인 완료", "failed": "실패", "unknown": "상태 미확인"},
-    "commerce.OrderStatusHistory.source": {"system": "시스템", "sabangnet": "사방넷", "admin": "관리자"},
-    "commerce.OrderCancellation.status": {"requested": "요청", "completed": "완료", "failed": "실패"},
-    "commerce.OrderClaim.claim_type": {"exchange": "교환", "return": "반품"},
-    "commerce.OrderClaim.status": {"requested": "요청", "processing": "처리 중", "completed": "완료", "rejected": "거절", "failed": "실패"},
-    "integrations.SabangnetOrderExport.status": {"pending": "대기", "generated": "파일 생성", "registered": "사방넷 등록 완료", "failed": "실패"},
-    "integrations.IntegrationJob.status": {"queued": "대기", "running": "진행 중", "succeeded": "성공", "failed": "실패", "partial": "일부 성공"},
-    "accounts.SocialConnection.provider": {"kakao": "카카오", "naver": "네이버"},
-    "content.HomeBanner.media_type": {"image": "이미지", "video": "동영상"},
-    "content.HomeBanner.link_type": {"none": "연결 없음", "listing": "판매 상품", "brand": "브랜드", "collection": "컬렉션", "external": "외부 URL"},
-    "content.PolicyPage.policy_type": {"terms": "이용약관", "privacy": "개인정보처리방침", "shipping": "배송 정책", "returns": "교환·반품 정책"},
-    "community.CustomerInquiry.category": {"order": "주문", "delivery": "배송", "product": "상품", "return": "교환·반품", "other": "기타"},
-    "community.CustomerInquiry.status": {"open": "답변 대기", "answered": "답변 완료", "closed": "종료"},
-    "benefits.Coupon.discount_type": {"fixed": "정액 할인", "percent": "정률 할인", "free_shipping": "무료배송"},
-    "benefits.MemberCoupon.status": {"available": "사용 가능", "used": "사용 완료", "expired": "기간 만료"},
-    "benefits.PointLedger.reason": {"order_use": "주문 사용", "order_earn": "주문 적립", "order_earn_reversal": "주문 적립 취소", "review_earn": "리뷰 적립", "cancel_restore": "취소 복원", "admin": "관리자 조정", "expire": "유효기간 만료"},
-}
-
-
 def apply_admin_localization():
     for model in apps.get_models():
         label = model._meta.label
@@ -182,6 +154,3 @@ def apply_admin_localization():
         for field in model._meta.fields:
             if field.name in FIELD_LABELS:
                 field.verbose_name = FIELD_LABELS[field.name]
-            choice_labels = CHOICE_LABELS.get(f"{label}.{field.name}")
-            if choice_labels:
-                field.choices = [(value, choice_labels.get(value, text)) for value, text in field.choices]

@@ -31,16 +31,16 @@ class ProductReviewImage(models.Model):
 
 class CustomerInquiry(models.Model):
     class Status(models.TextChoices):
-        OPEN = "open", "Open"
-        ANSWERED = "answered", "Answered"
-        CLOSED = "closed", "Closed"
+        OPEN = "open", "답변 대기"
+        ANSWERED = "answered", "답변 완료"
+        CLOSED = "closed", "종료"
 
     class Category(models.TextChoices):
-        ORDER = "order", "Order"
-        DELIVERY = "delivery", "Delivery"
-        PRODUCT = "product", "Product"
-        RETURN = "return", "Return/Exchange"
-        OTHER = "other", "Other"
+        ORDER = "order", "주문"
+        DELIVERY = "delivery", "배송"
+        PRODUCT = "product", "상품"
+        RETURN = "return", "교환·반품"
+        OTHER = "other", "기타"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="inquiries")
     order = models.ForeignKey("commerce.Order", null=True, blank=True, on_delete=models.PROTECT, related_name="inquiries")

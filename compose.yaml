@@ -18,7 +18,7 @@ services:
     command:
       - sh
       - -c
-      - while true; do python manage.py expire_payment_pending_orders; sleep 60; done
+      - while true; do python manage.py process_integration_jobs --limit 5; python manage.py expire_payment_pending_orders; sleep 10; done
     volumes:
       - sequenz_data:/data
     depends_on:

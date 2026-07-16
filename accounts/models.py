@@ -19,8 +19,8 @@ class MemberProfile(models.Model):
 
 class SocialConnection(models.Model):
     class Provider(models.TextChoices):
-        KAKAO = "kakao", "Kakao"
-        NAVER = "naver", "Naver"
+        KAKAO = "kakao", "카카오"
+        NAVER = "naver", "네이버"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="social_connections")
     provider = models.CharField(max_length=20, choices=Provider.choices)
